@@ -42,7 +42,7 @@ def get_cosine_curve(
     """
     X = np.asarray(X, float)
 
-    base = np.cos(2**i/2 * X)
+    base = np.cos(- 2**i/2 * (X+2*np.pi))
     if linear:
         amp = (N-i-1) / N
     else:

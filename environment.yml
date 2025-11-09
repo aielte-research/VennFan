@@ -1,0 +1,9 @@
+name: vennfan
+channels:
+  - anaconda
+dependencies:
+  - python=3.12
+  - shapely
+  - numpy
+  - scikit-image
+  - matplotlib

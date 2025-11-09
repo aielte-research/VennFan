@@ -2,7 +2,7 @@
 """
 Sine-curve "Venn" diagrams up to N=10, plus a "vennfan" circular variant.
 
-- `venntrig(...)` draws the rectangular version over [0,  2π] × [-H, H].
+- `venntrig(...)` draws the rectangular version over [0, 2π] × [-1, 1].
 - `vennfan(...)` does the same, but it maps the half-plane picture onto a circle:
     * y = 0  →  circle of radius `radius`
     * y > 0  →  inside the circle
@@ -11,15 +11,22 @@ Sine-curve "Venn" diagrams up to N=10, plus a "vennfan" circular variant.
 
 from typing import Sequence, Optional, Union, Tuple, Dict, Callable, List
 import itertools
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
 from scipy.ndimage import distance_transform_edt
-from colors import _default_palette_for_n, _rgb, _auto_text_color_from_rgb, _color_mix_subtractive, _color_mix_average
+
+from colors import (
+    _default_palette_for_n,
+    _rgb,
+    _auto_text_color_from_rgb,
+    _color_mix_subtractive,
+    _color_mix_average,
+)
 from curves import get_sine_curve, get_cosine_curve
-import os
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,10 +38,10 @@ def _disjoint_region_masks(masks_list: Sequence[np.ndarray]) -> Dict[Tuple[int, 
     return a dict mapping every binary tuple key of length N (e.g., (1,0,1,0))
     to the corresponding disjoint region mask.
     """
-    memb = np.stack(masks_list, axis=-1).astype(bool)  # (H,W,N)
+    memb = np.stack(masks_list, axis=-1).astype(bool)  # (H, W, N)
     N = memb.shape[-1]
     keys = list(itertools.product((0, 1), repeat=N))   # all 2^N keys
-    key_arr = np.array(keys, dtype=bool)               # (K,N)
+    key_arr = np.array(keys, dtype=bool)               # (K, N)
 
     maskK = (memb[..., None, :] == key_arr[None, None, :, :]).all(axis=-1)
     return {tuple(map(int, k)): maskK[..., i] for i, k in enumerate(keys)}
@@ -60,6 +67,7 @@ def _centroid(mask: np.ndarray, X: np.ndarray, Y: np.ndarray):
 def _visual_center_margin(mask: np.ndarray, X: np.ndarray, Y: np.ndarray, margin_frac: float = 0.05):
     """
     Visual center, but ignore a small margin near the rectangular box edges.
+    Used for complement / all-sets center.
     """
     if not mask.any():
         return None
@@ -81,6 +89,7 @@ def _visual_center_margin(mask: np.ndarray, X: np.ndarray, Y: np.ndarray, margin
     yy, xx = np.unravel_index(np.argmax(dist), dist.shape)
     return float(X[yy, xx]), float(Y[yy, xx])
 
+
 def _normalize_angle_90(deg: float) -> float:
     """Map any angle (deg) to an equivalent in about [-90, +90] for legible text."""
     a = float(deg)
@@ -89,6 +98,65 @@ def _normalize_angle_90(deg: float) -> float:
     while a < -85.0:
         a += 180.0
     return a
+
+
+def _visual_center_inset(
+    mask: np.ndarray,
+    X: np.ndarray,
+    Y: np.ndarray,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    n_pix: int = 2,
+):
+    """
+    Visual center, but computed inside an inset of the bounding box:
+    - Intersect the region with a rectangle inset by n_pix grid steps
+      from each side, then run distance transform.
+    - If that intersection is empty, fall back to the full region, but
+      clamp the final coordinates back into the inset box.
+
+    This is to avoid labels landing exactly on the bounding box,
+    especially for cosine + linear_scale.
+    """
+    if not mask.any():
+        return None
+
+    H, W = mask.shape
+    xs = X[0, :]
+    ys = Y[:, 0]
+
+    if xs.size > 1:
+        dx = xs[1] - xs[0]
+    else:
+        dx = (x_max - x_min) / max(W - 1, 1)
+
+    if ys.size > 1:
+        dy = ys[1] - ys[0]
+    else:
+        dy = (y_max - y_min) / max(H - 1, 1)
+
+    inset_x_min = x_min + n_pix * dx
+    inset_x_max = x_max - n_pix * dx
+    inset_y_min = y_min + n_pix * dy
+    inset_y_max = y_max - n_pix * dy
+
+    mask_inset = mask & (X > inset_x_min) & (X < inset_x_max) & (Y > inset_y_min) & (Y < inset_y_max)
+
+    if mask_inset.any():
+        pos = _visual_center(mask_inset, X, Y)
+    else:
+        pos = _visual_center(mask, X, Y)
+
+    if pos is None:
+        return None
+
+    x_lab, y_lab = pos
+    # Clamp into inset box so we never land exactly on bbox edges.
+    x_lab = min(max(x_lab, inset_x_min), inset_x_max)
+    y_lab = min(max(y_lab, inset_y_min), inset_y_max)
+    return x_lab, y_lab
 
 
 def _region_label_orientation(
@@ -101,8 +169,8 @@ def _region_label_orientation(
     seg_frac: float = 0.25,
 ) -> float:
     """
-    (Used only by rectangular version now.)
-    Choose rotation by maximizing product of in-region segment lengths from anchor.
+    Original orientation helper (kept for rectangular version if needed).
+    Not used in the new region logic, but left here for completeness.
     """
     if not mask.any():
         return 0.0
@@ -182,14 +250,7 @@ def _arc_angle_for_region(
     n_bins: int = 720,
 ) -> Optional[float]:
     """
-    Robust angle on the main circle for a region.
-
-    Strategy:
-      - Take mask & circle_band (pixels near radius R).
-      - Bin their angles into `n_bins` bins around [0, 2π).
-      - Find the longest contiguous segment of bins (circularly) that are True.
-      - Use the center of that segment as the label angle.
-      - If no band pixels or degenerate, fall back to angle of visual center.
+    Robust angle on the main circle for a region (used by vennfan nonlinear).
     """
     if mask is None or not mask.any():
         return None
@@ -244,10 +305,6 @@ def _arc_angle_for_region(
     return float(np.arctan2(pos_vc[1], pos_vc[0]))
 
 
-# ---------------------------------------------------------------------------
-# Harmonic helper (matching the LaTeX indexing)
-# ---------------------------------------------------------------------------
-
 def _harmonic_info_for_index(i: int, N: int, include_constant_last: bool) -> Tuple[Optional[float], Optional[float]]:
     """
     For a set index i = 0,1,...,N-1, return (h_i, h_max) where
@@ -275,8 +332,215 @@ def _harmonic_info_for_index(i: int, N: int, include_constant_last: bool) -> Tup
 
     return h_i, h_max
 
+
+def _exclusive_curve_bisector(
+    i: int,
+    x_plot: np.ndarray,
+    curves: Sequence[np.ndarray],
+    N: int,
+    y_min: float,
+    y_max: float,
+) -> Optional[Tuple[float, float]]:
+    """
+    For class i, find the midpoint (x, y) on its boundary curve that borders
+    its *exclusive* region, using the analytic curves only.
+
+    Bisector is defined with respect to *arc length* along that curve segment.
+    """
+    key_bits = np.array([1 if k == i else 0 for k in range(N)], dtype=int)
+    key_code = int(sum(int(b) << k for k, b in enumerate(key_bits)))
+
+    y_i = curves[i]  # shape (M,)
+    if y_i.size == 0:
+        return None
+
+    eps_y = 0.01 * (y_max - y_min)
+    y_probe = y_i + eps_y
+
+    # Membership codes at each x_plot
+    M = []
+    for k in range(N):
+        y_k = curves[k]
+        M.append(y_probe >= y_k)
+    M = np.stack(M, axis=0)  # (N, M)
+
+    codes = np.zeros(y_i.size, dtype=int)
+    for k in range(N):
+        codes |= (M[k].astype(int) << k)
+    inside = (codes == key_code)
+
+    Mlen = inside.size
+    best_len = 0
+    best_start = None
+    best_end = None
+    j = 0
+    while j < Mlen:
+        if inside[j]:
+            s = j
+            while j < Mlen and inside[j]:
+                j += 1
+            e = j - 1
+            length = e - s + 1
+            if length > best_len:
+                best_len = length
+                best_start = s
+                best_end = e
+        else:
+            j += 1
+
+    if best_len <= 0 or best_start is None or best_end is None:
+        return None
+
+    # Arc-length-based midpoint along the segment [best_start .. best_end]
+    s = best_start
+    e = best_end
+
+    x_seg = x_plot[s:e + 1].astype(float)
+    y_seg = y_i[s:e + 1].astype(float)
+
+    if x_seg.size == 1:
+        return float(x_seg[0]), float(y_seg[0])
+
+    dx = np.diff(x_seg)
+    dy = np.diff(y_seg)
+    seg_len = np.sqrt(dx * dx + dy * dy)
+    total_len = float(seg_len.sum())
+
+    if total_len == 0.0:
+        # Degenerate; just return the middle sample in index-space
+        mid_idx = (s + e) // 2
+        return float(x_plot[mid_idx]), float(y_i[mid_idx])
+
+    cum_len = np.concatenate(([0.0], np.cumsum(seg_len)))
+    half_len = 0.5 * total_len
+
+    # Find segment where the half-length falls
+    k = int(np.searchsorted(cum_len, half_len) - 1)
+    if k < 0:
+        k = 0
+    if k >= seg_len.size:
+        k = seg_len.size - 1
+
+    l0 = cum_len[k]
+    l1 = cum_len[k + 1]
+    if l1 <= l0:
+        t = 0.0
+    else:
+        t = (half_len - l0) / (l1 - l0)
+
+    x_mid = x_seg[k] + t * (x_seg[k + 1] - x_seg[k])
+    y_mid = y_seg[k] + t * (y_seg[k + 1] - y_seg[k])
+
+    return float(x_mid), float(y_mid)
+
+
+def _tangent_angle_from_curve_fn(
+    curve_fn: Callable,
+    i: int,
+    N: int,
+    x0: float,
+    curve_exponent: float,
+    amp_decay_base: float,
+    linear_scale: bool,
+) -> float:
+    """
+    Numeric derivative of curve i at x0 to determine tangent angle in degrees.
+    (Not used in vennfan now, left for reference.)
+    """
+    if i == N - 1:
+        return 0.0
+
+    h = max(1e-3, (2.0 * np.pi) / 2000.0)
+    x1 = x0 - h
+    x2 = x0 + h
+
+    y1 = curve_fn(
+        np.array([x1]),
+        i,
+        N,
+        p=curve_exponent,
+        lmbd=amp_decay_base,
+        linear=linear_scale,
+    )[0]
+    y2 = curve_fn(
+        np.array([x2]),
+        i,
+        N,
+        p=curve_exponent,
+        lmbd=amp_decay_base,
+        linear=linear_scale,
+    )[0]
+
+    dx = x2 - x1
+    if dx == 0.0:
+        return 0.0
+
+    slope = float(y2 - y1) / dx
+    angle = np.degrees(np.arctan2(slope, 1.0))
+    return _normalize_angle_90(angle)
+
+
+def _region_constant_line_bisector(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[float, float]]:
+    """
+    For a given region mask, find the midpoint along the intersection with y ≈ 0.
+    """
+    if not mask.any():
+        return None
+
+    H, W = mask.shape
+    xs = X[0, :]
+    ys = Y[:, 0]
+
+    if H < 2 or W < 1:
+        return None
+
+    # Grid spacing in y
+    if ys.size > 1:
+        dy = abs(ys[1] - ys[0])
+    else:
+        dy = float(abs(Y.max() - Y.min()) / max(H - 1, 1))
+
+    # Band around y=0
+    band = (np.abs(Y) <= dy)
+    band_mask = mask & band
+    if not band_mask.any():
+        return None
+
+    # Collapse in y to see which x-columns touch the band
+    col_mask = band_mask.any(axis=0)  # shape (W,)
+    if not col_mask.any():
+        return None
+
+    best_len = 0
+    best_start = None
+    best_end = None
+    j = 0
+    while j < W:
+        if col_mask[j]:
+            s = j
+            while j < W and col_mask[j]:
+                j += 1
+            e = j - 1
+            length = e - s + 1
+            if length > best_len:
+                best_len = length
+                best_start = s
+                best_end = e
+        else:
+            j += 1
+
+    if best_len <= 0 or best_start is None or best_end is None:
+        return None
+
+    mid = 0.5 * (best_start + best_end)
+    idxs = np.arange(W, dtype=float)
+    x_mid = float(np.interp(mid, idxs, xs.astype(float)))
+    y_mid = 0.0
+    return x_mid, y_mid
+
+
 # ---------------------------------------------------------------------------
-# Main rectangular plotting function
+# Main rectangular plotting function (venntrig)
 # ---------------------------------------------------------------------------
 
 def venntrig(
@@ -352,24 +616,26 @@ def venntrig(
 
     # Sampling grid in the universe rectangle
     x_min, x_max = 0.0, 2.0 * np.pi
-    y_min, y_max = - 1.0, 1.0
+    y_min, y_max = -1.0, 1.0
     xs = np.linspace(x_min, x_max, int(sample_res_x))
     ys = np.linspace(y_min, y_max, int(sample_res_y))
     X, Y = np.meshgrid(xs, ys)
 
-    # Membership masks
+    # Membership masks & per-class 1D curves on xs
     membership: List[np.ndarray] = []
-    
+    curve_1d_list: List[np.ndarray] = []
+
     if curve_mode == "sine":
         curve_fn = get_sine_curve
     else:
         curve_fn = get_cosine_curve
 
     for i in range(N):
-        if i == N-1:
+        if i == N - 1:
             mask = Y >= 0.0
+            curve_1d = np.zeros_like(xs)
         else:
-            curve = curve_fn(
+            curve_full = curve_fn(
                 X,
                 i,
                 N,
@@ -377,8 +643,10 @@ def venntrig(
                 lmbd=amp_decay_base,
                 linear=linear_scale,
             )
-            mask = Y >= curve
+            mask = Y >= curve_full
+            curve_1d = curve_full[0, :]
         membership.append(mask)
+        curve_1d_list.append(curve_1d)
 
     # Disjoint region masks and region colors
     region_masks = _disjoint_region_masks(membership)
@@ -417,38 +685,30 @@ def venntrig(
     ax.set_yticks([])
     ax.margins(0.0, 0.0)
 
-    # Bounding box in black
-    ax.add_patch(
-        Rectangle(
-            (x_min, y_min),
-            x_max - x_min,
-            y_max - y_min,
-            fill=False,
-            edgecolor="black",
-            linewidth=1.5,
-            zorder=3,
-        )
-    )
-
-    # Class boundaries (store curves)
+    # Class boundaries (store curves for plotting & later class-label logic)
     x_plot = np.linspace(x_min, x_max, 1200)
     curves: List[np.ndarray] = []
     harmonics_for_class: List[Optional[float]] = []
 
+    if curve_mode == "sine":
+        curve_fn_plot = get_sine_curve
+    else:
+        curve_fn_plot = get_cosine_curve
+
     for i in range(N):
-        h_i, h_max = _harmonic_info_for_index(i, N, include_constant_last)
+        h_i, _ = _harmonic_info_for_index(i, N, include_constant_last)
         harmonics_for_class.append(h_i)
 
-        if i == N-1:
+        if i == N - 1:
             y_plot = np.zeros_like(x_plot)
-        else:            
-            y_plot = curve_fn(
+        else:
+            y_plot = curve_fn_plot(
                 x_plot,
                 i,
                 N,
                 p=curve_exponent,
                 lmbd=amp_decay_base,
-                linear=linear_scale
+                linear=linear_scale,
             )
 
         curves.append(y_plot)
@@ -461,7 +721,7 @@ def venntrig(
             zorder=4,
         )
 
-    # Last local maximum for last non-constant class
+    # Last local maximum for last non-constant class (kept as a fallback anchor)
     last_max_x = None
     non_const_indices = [i for i, h in enumerate(harmonics_for_class) if h is not None]
     if non_const_indices:
@@ -469,7 +729,6 @@ def venntrig(
         y_last = curves[last_idx]
         dy_last = np.diff(y_last)
         sign_last = np.sign(dy_last)
-
         idx_max = None
         for j in range(1, len(sign_last)):
             if sign_last[j - 1] > 0 and sign_last[j] < 0:
@@ -481,18 +740,17 @@ def venntrig(
     zeros = (0,) * N
     ones = (1,) * N
 
-    # Generic region labels
+    # --- Region labels ---
+    const_y = 0.0
+    region_offset = 0.05 * (y_max - y_min)
+
     for key, mask in region_masks.items():
         if key == zeros or key == ones:
-            continue
+            continue  # complement handled separately; all-sets handled below
         value = arr[key]
         if value is None:
             continue
         if not mask.any():
-            continue
-
-        pos = _visual_center(mask, X, Y)
-        if pos is None:
             continue
 
         if text_color is None:
@@ -504,17 +762,47 @@ def venntrig(
         else:
             this_color = text_color
 
-        if N > 5:
-            rot = _region_label_orientation(mask, X, Y, pos[0], pos[1])
-        else:
+        if linear_scale:
+            # Linear: visual centers, inset to avoid bbox (no rotation)
+            pos = _visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
+            if pos is None:
+                continue
+            x_lab, y_lab = pos
             rot = 0.0
+            ha = "center"
+            va = "center"
+        else:
+            # Nonlinear: anchor at constant-line intersection bisector, rotated 90°
+            last_bit = key[-1]
+            bis = _region_constant_line_bisector(mask, X, Y)
+            if bis is not None:
+                x_mid, y0 = bis  # y0 is 0.0
+                x_lab = x_mid
+                if last_bit == 1:
+                    # Above constant line (inside last class): just above, left-justified
+                    y_lab = y0 + region_offset
+                    ha = "left"
+                else:
+                    # Below constant line: just below, right-justified
+                    y_lab = y0 - region_offset
+                    ha = "right"
+            else:
+                # Fallback: inset visual center, still rotated
+                pos = _visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
+                if pos is None:
+                    continue
+                x_lab, y_lab = pos
+                ha = "center"
+
+            rot = 90.0
+            va = "center"
 
         ax.text(
-            pos[0],
-            pos[1],
+            x_lab,
+            y_lab,
             f"{value}",
-            ha="center",
-            va="center",
+            ha=ha,
+            va=va,
             fontsize=region_label_fontsize,
             color=this_color,
             zorder=5,
@@ -527,33 +815,62 @@ def venntrig(
     if all_mask.any():
         val_all = arr[ones]
         if val_all is not None:
-            pos = _visual_center_margin(all_mask, X, Y, margin_frac=0.05)
-            if pos is not None:
+            if linear_scale:
+                # Linear: use margin-based visual center, no rotation
+                pos = _visual_center_margin(all_mask, X, Y, margin_frac=0.05)
+                if pos is not None:
+                    if text_color is None:
+                        rgb = region_rgbs.get(ones)
+                        this_color = _auto_text_color_from_rgb(rgb) if rgb is not None else "black"
+                    else:
+                        this_color = text_color
+
+                    ax.text(
+                        pos[0],
+                        pos[1],
+                        f"{val_all}",
+                        ha="center",
+                        va="center",
+                        fontsize=region_label_fontsize,
+                        color=this_color,
+                        zorder=5,
+                        rotation=0.0,
+                        rotation_mode="anchor",
+                    )
+            else:
+                # Nonlinear: same constant-line bisector rule, rotated 90°
                 if text_color is None:
                     rgb = region_rgbs.get(ones)
                     this_color = _auto_text_color_from_rgb(rgb) if rgb is not None else "black"
                 else:
                     this_color = text_color
 
-                if N > 5:
-                    rot = _region_label_orientation(all_mask, X, Y, pos[0], pos[1])
+                bis = _region_constant_line_bisector(all_mask, X, Y)
+                if bis is not None:
+                    x_mid, y0 = bis  # y0 is 0.0
+                    x_lab = x_mid
+                    y_lab = y0 + region_offset
                 else:
-                    rot = 0.0
+                    pos = _visual_center_inset(all_mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
+                    if pos is None:
+                        x_lab, y_lab = (0.5 * (x_min + x_max), const_y + region_offset)
+                    else:
+                        x_lab, y_lab = pos
 
                 ax.text(
-                    pos[0],
-                    pos[1],
+                    x_lab,
+                    y_lab,
                     f"{val_all}",
-                    ha="center",
+                    ha="left",
                     va="center",
                     fontsize=region_label_fontsize,
                     color=this_color,
                     zorder=5,
-                    rotation=rot,
+                    rotation=90.0,
                     rotation_mode="anchor",
                 )
 
-    # Complement (no rotation)
+    # Complement (all zeros) – visual center with margin, no rotation
     comp_mask = np.logical_not(np.logical_or.reduce(membership))
     if comp_mask.any():
         val_comp = arr[zeros]
@@ -565,8 +882,6 @@ def venntrig(
                 else:
                     this_color = text_color
 
-                rot = 0.0  # no rotation for complement
-
                 ax.text(
                     pos[0],
                     pos[1],
@@ -576,39 +891,78 @@ def venntrig(
                     fontsize=region_label_fontsize,
                     color=this_color,
                     zorder=5,
-                    rotation=rot,
+                    rotation=0.0,
                     rotation_mode="anchor",
                 )
 
-    # Class labels
-    label_offset = 0.12
+    # --- Class labels for rectangular version ---
+    label_offset = 0.06
     dx_const, dy_const = last_constant_label_offset
+
+    base_rotations = [2.825, 5.625, 11.25, 22.5, 45.0, 90.0]
+
     for i, (name, label_col) in enumerate(zip(class_names, label_rgbs)):
-        y_plot = curves[i]
+        if not name:
+            continue  # skip empty labels
         h_i = harmonics_for_class[i]
 
-        if h_i is None:
-            if last_max_x is None:
-                x_lab = 0.5 * (x_min + x_max)
-            else:
-                x_lab = last_max_x
-            y_lab = -label_offset
-            if N > 4:
+        x_lab = None
+        y_lab = None
+
+        # Preferred: analytic "exclusive-region" bisector along the class curve
+        bis = _exclusive_curve_bisector(
+            i,
+            x_plot,
+            curves,
+            N,
+            y_min,
+            y_max,
+        )
+
+        if bis is not None:
+            x_bis, y_bis = bis
+            x_lab = x_bis
+            y_lab = y_bis - label_offset
+            if y_lab < y_min + 0.05:
+                y_lab = y_min + 0.05
+            if h_i is None and N > 4:
                 x_lab += dx_const
                 y_lab += dy_const
         else:
-            dy = np.diff(y_plot)
-            sign = np.sign(dy)
-            i_min_loc = None
-            for j in range(1, len(sign)):
-                if sign[j - 1] < 0 and sign[j] > 0:
-                    i_min_loc = j
-            if i_min_loc is None:
-                i_min_loc = int(np.argmin(y_plot))
-            x_lab = x_plot[i_min_loc]
-            y_lab = y_plot[i_min_loc] - label_offset
-            if y_lab < y_min + 0.05:
-                y_lab = y_min + 0.05
+            # Fallback: previous min-based anchors
+            y_plot = curves[i]
+            if h_i is None:
+                if last_max_x is None:
+                    x_lab = 0.5 * (x_min + x_max)
+                else:
+                    x_lab = last_max_x
+                y_lab = -label_offset
+                if N > 4:
+                    x_lab += dx_const
+                    y_lab += dy_const
+            else:
+                dyc = np.diff(y_plot)
+                signc = np.sign(dyc)
+                i_min_loc = None
+                for j in range(1, len(signc)):
+                    if signc[j - 1] < 0 and signc[j] > 0:
+                        i_min_loc = j
+                if i_min_loc is None:
+                    i_min_loc = int(np.argmin(y_plot))
+                x_lab = x_plot[i_min_loc]
+                y_lab = y_plot[i_min_loc] - label_offset
+                if y_lab < y_min + 0.05:
+                    y_lab = y_min + 0.05
+
+        # Rotation: fixed sequence, no tangents
+        if h_i is None and i == N - 1:
+            # Last "constant" class: always full 90°
+            rot_cls = 90.0
+        else:
+            if i < len(base_rotations):
+                rot_cls = base_rotations[i]
+            else:
+                rot_cls = 90.0
 
         ax.text(
             x_lab,
@@ -619,6 +973,8 @@ def venntrig(
             fontsize=class_label_fontsize,
             color=tuple(label_col),
             fontweight="bold",
+            rotation=rot_cls,
+            rotation_mode="anchor",
             zorder=6,
         )
 
@@ -664,10 +1020,12 @@ def _halfplane_to_disc(
     pos = (y >= 0.0)
     neg = ~pos
 
-    rho[pos] = R * (1.0 - y[pos] / y_pos_max)
+    # Map inside
+    rho[pos] = R * (1.0 - y[pos] / y_pos_max) if y_pos_max != 0 else R
 
+    # Map outside
     denom = (R_out - R)
-    rho[neg] = R + denom * (y[neg] / y_neg_min)
+    rho[neg] = R + denom * (y[neg] / y_neg_min) if y_neg_min != 0 else R_out
 
     theta = x
     u = rho * np.cos(theta)
@@ -709,7 +1067,7 @@ def vennfan(
 
     if curve_mode not in ("cosine", "sine"):
         raise ValueError(f"Unsupported curve_mode {curve_mode!r}; use 'cosine' or 'sine'.")
-    
+
     if curve_mode == "sine":
         curve_fn = get_sine_curve
     else:
@@ -763,7 +1121,7 @@ def vennfan(
         raise TypeError("color_mixing must be either a string or a callable.")
 
     x_min, x_max = 0.0, 2.0 * np.pi
-    y_min, y_max = -1+1/N, 1-1/N
+    y_min, y_max = -1 + 1 / N, 1 - 1 / N
 
     R = 1.0
     R_out = 2.0 * R
@@ -772,8 +1130,7 @@ def vennfan(
     U, V = np.meshgrid(us, vs)
 
     rho = np.sqrt(U * U + V * V)
-    theta = np.arctan2(V, U)
-    theta = np.mod(theta, 2.0 * np.pi)
+    theta = np.mod(np.arctan2(V, U), 2.0 * np.pi)
 
     x_old = theta.copy()
     y_old = np.full_like(U, y_min - 1.0)
@@ -785,18 +1142,24 @@ def vennfan(
     ring = (rho > R) & (rho <= R_out)
 
     t_in = np.zeros_like(rho)
-    t_in[inside_disc] = rho[inside_disc] / R
-    y_old[inside_disc] = y_pos_max * (1.0 - t_in[inside_disc])
+    if y_pos_max != 0:
+        t_in[inside_disc] = rho[inside_disc] / R
+        y_old[inside_disc] = y_pos_max * (1.0 - t_in[inside_disc])
+    else:
+        y_old[inside_disc] = 0.0
 
     t_out = np.zeros_like(rho)
     denom = (R_out - R)
-    t_out[ring] = (rho[ring] - R) / denom
-    y_old[ring] = y_neg_min * t_out[ring]
+    if y_neg_min != 0:
+        t_out[ring] = (rho[ring] - R) / denom
+        y_old[ring] = y_neg_min * t_out[ring]
+    else:
+        y_old[ring] = y_min
 
     membership: List[np.ndarray] = []
 
     for i in range(N):
-        if i == N-1:
+        if i == N - 1:
             mask = y_old >= 0.0
         else:
             curve = curve_fn(
@@ -854,10 +1217,10 @@ def vennfan(
     harmonics_for_class: List[Optional[float]] = []
 
     for i in range(N):
-        h_i, h_max = _harmonic_info_for_index(i, N, include_constant_last)
+        h_i, _ = _harmonic_info_for_index(i, N, include_constant_last)
         harmonics_for_class.append(h_i)
 
-        if i == N-1:
+        if i == N - 1:
             y_plot = np.zeros_like(x_plot)
         else:
             y_plot = curve_fn(
@@ -892,22 +1255,6 @@ def vennfan(
                     linewidth=linewidth,
                     zorder=4,
                 )
-
-    # Last local max for last non-constant (in half-plane x)
-    last_max_x = None
-    non_const_indices = [i for i, h in enumerate(harmonics_for_class) if h is not None]
-    if non_const_indices:
-        last_idx = non_const_indices[-1]
-        y_last = curves[last_idx]
-        dy_last = np.diff(y_last)
-        sign_last = np.sign(dy_last)
-        idx_max = None
-        for j in range(1, len(sign_last)):
-            if sign_last[j - 1] > 0 and sign_last[j] < 0:
-                idx_max = j
-        if idx_max is None:
-            idx_max = int(np.argmax(y_last))
-        last_max_x = x_plot[idx_max]
 
     zeros = (0,) * N
     ones = (1,) * N
@@ -1039,86 +1386,51 @@ def vennfan(
 
     # --- Class labels on vennfan ---
     label_offset = 0.18 * height_scale
-    dx_const, dy_const = last_constant_label_offset
+    dx_const, dy_const = last_constant_label_offset  # currently unused
+    extra_radial_offset = 0.05  # your requested extra radial offset for i >= 4
 
     for i, (name, label_col) in enumerate(zip(class_names, label_rgbs)):
+        if not name:
+            continue  # skip empty labels
         h_i = harmonics_for_class[i]
 
-        # First 3 classes: same min-based anchor mapped to disc, tangent-oriented
-        if i < 3:
-            y_plot = curves[i]
-            if h_i is None:
-                if last_max_x is None:
-                    x_lab = 0.5 * (x_min + x_max)
-                else:
-                    x_lab = last_max_x
-                y_lab = -label_offset
-                if N > 4:
-                    x_lab += dx_const
-                    y_lab += dy_const
-            else:
-                dyc = np.diff(y_plot)
-                signc = np.sign(dyc)
-                i_min_loc = None
-                for j in range(1, len(signc)):
-                    if signc[j - 1] < 0 and signc[j] > 0:
-                        i_min_loc = j
-                if i_min_loc is None:
-                    i_min_loc = int(np.argmin(y_plot))
-                x_lab = x_plot[i_min_loc]
-                y_lab = y_plot[i_min_loc] - label_offset
-                if y_lab < y_min + 0.05 * height_scale:
-                    y_lab = y_min + 0.05 * height_scale
-
-            u_lab_arr, v_lab_arr = _halfplane_to_disc(
-                np.array([x_lab]),
-                np.array([y_lab]),
-                R,
+        # --- Compute anchor geometry (angle_anchor, v_out, r_lab, u_lab, v_lab) ---
+        if h_i is None and i == N - 1:
+            # Constant last class: fixed radial angle, outside circle
+            angle_anchor = -2.0 * np.pi / (2.0 ** (N))
+            r_anchor = R  # conceptually on the circle
+            v_out = np.array([np.cos(angle_anchor), np.sin(angle_anchor)], float)
+            # base radial label radius
+            r_lab = R * (1.0 + float(region_radial_offset_outside))
+        else:
+            # Non-constant classes: true bisector on boundary, mapped outwards
+            bis = _exclusive_curve_bisector(
+                i,
+                x_plot,
+                curves,
+                N,
                 y_min,
                 y_max,
             )
-            u_lab = float(u_lab_arr[0])
-            v_lab = float(v_lab_arr[0])
-
-            theta_lab = np.arctan2(v_lab, u_lab)
-            tangent_angle_deg = np.degrees(theta_lab + np.pi / 2.0)
-            rot_cls = _normalize_angle_90(tangent_angle_deg)
-
-            ax.text(
-                u_lab,
-                v_lab,
-                name,
-                ha="center",
-                va="top",
-                fontsize=class_label_fontsize,
-                color=tuple(label_col),
-                fontweight="bold",
-                rotation=rot_cls,
-                rotation_mode="anchor",
-                zorder=6,
-            )
-            continue
-
-        # From 4th class onward (i >= 3): radial label placement
-
-        if h_i is not None:
-            # Anchor from last local minimum in half-plane, then mapped outwards
-            y_plot = curves[i]
-            dyc = np.diff(y_plot)
-            signc = np.sign(dyc)
-            i_min = None
-            for j in range(1, len(signc)):
-                if signc[j - 1] < 0 and signc[j] > 0:
-                    i_min = j
-            if i_min is None:
-                i_min = int(np.argmin(y_plot))
-
-            x_anchor = x_plot[i_min]
-            y_anchor = y_plot[i_min]
+            if bis is not None:
+                x_bis, y_bis = bis
+            else:
+                # Fallback to curve minimum in half-plane
+                y_plot = curves[i]
+                dyc = np.diff(y_plot)
+                signc = np.sign(dyc)
+                i_min = None
+                for j in range(1, len(signc)):
+                    if signc[j - 1] < 0 and signc[j] > 0:
+                        i_min = j
+                if i_min is None:
+                    i_min = int(np.argmin(y_plot))
+                x_bis = x_plot[i_min]
+                y_bis = y_plot[i_min]
 
             u_anchor_arr, v_anchor_arr = _halfplane_to_disc(
-                np.array([x_anchor]),
-                np.array([y_anchor]),
+                np.array([x_bis]),
+                np.array([y_bis]),
                 R,
                 y_min,
                 y_max,
@@ -1127,46 +1439,37 @@ def vennfan(
             v_anchor = float(v_anchor_arr[0])
 
             angle_anchor = float(np.arctan2(v_anchor, u_anchor))
-            v_out = np.array([np.cos(angle_anchor), np.sin(angle_anchor)], float)
-
             r_anchor = float(np.sqrt(u_anchor * u_anchor + v_anchor * v_anchor))
+            if r_anchor == 0.0:
+                v_out = np.array([1.0, 0.0], float)
+            else:
+                v_out = np.array([u_anchor, v_anchor], float) / r_anchor
+
             r_lab = r_anchor + float(region_radial_offset_outside) * R
 
-            u_lab = r_lab * v_out[0]
-            v_lab = r_lab * v_out[1]
-
-            deg_raw = np.degrees(angle_anchor)
-            rot_cls = _normalize_angle_90(deg_raw)
-            rot_rad = np.deg2rad(rot_cls)
-            v_base = np.array([np.cos(rot_rad), np.sin(rot_rad)], float)
-
-            v_circle = -v_out  # circle lies inward of label
-            d = float(np.dot(v_circle, v_base))
-            ha = "right" if d >= 0 else "left"
-            va = "center"
-
+        # Extra radial offset for 5th+ classes
+        if i >= 3:
+            r_lab += extra_radial_offset * R
         else:
-            # Constant (infinity) class: anchor via exclusive-region arc bisector
-            key_excl = tuple(1 if j == i else 0 for j in range(N))
-            mask_excl = region_masks.get(key_excl)
-            angle_anchor = _arc_angle_for_region(mask_excl, circle_band, theta, U, V)
-            if angle_anchor is None:
-                angle_anchor = 0.0
+            r_lab += extra_radial_offset * R *2
 
-            v_out = np.array([np.cos(angle_anchor), np.sin(angle_anchor)], float)
-            r_lab = R * (1.0 + float(region_radial_offset_outside))
+        u_lab = r_lab * v_out[0]
+        v_lab = r_lab * v_out[1]
 
-            u_lab = r_lab * v_out[0]
-            v_lab = r_lab * v_out[1]
+        # --- Orientation & alignment ---
+        angle_deg = np.degrees(angle_anchor)+5
 
-            deg_raw = np.degrees(angle_anchor)
-            rot_cls = _normalize_angle_90(deg_raw)
-            rot_rad = np.deg2rad(rot_cls)
-            v_base = np.array([np.cos(rot_rad), np.sin(rot_rad)], float)
-
-            v_circle = -v_out
-            d = float(np.dot(v_circle, v_base))
-            ha = "right" if d >= 0 else "left"
+        if i < 3:
+            # Small indices: tangential, anchor at center
+            deg_tangent = _normalize_angle_90(angle_deg + 90.0)
+            rot_cls = deg_tangent
+            ha = "center"
+            va = "center"
+        else:
+            # i >= 4: radial, anchor at left side
+            deg_radial = _normalize_angle_90(angle_deg)
+            rot_cls = deg_radial
+            ha = "left"
             va = "center"
 
         ax.text(
@@ -1220,42 +1523,26 @@ if __name__ == "__main__":
         "Zeta", "Eta", "Theta", "Iota", "Kappa"
     ]
 
-    # # Rectangular version (N=6..7) using default per-N palettes
-    # for N in range(2, 7):
-    #     print(f"Generating sine diagram for N={N}...")
-    #     values = _make_demo_values(N)
-    #     class_names = greek_names[:N]
+    # # Rectangular version (N=6) in various modes
+    # for curve_mode in ["cosine", "sine"]:
+    #     for linear_scale in [True, False]:
+    #         for N in range(6, 7):
+    #             print(f"Generating diagram for curve_mode={curve_mode} linear_scale={linear_scale} N={N} ...")
+    #             values = _make_demo_values(N)
+    #             class_names = greek_names[:N]
 
-    #     outfile = f"img/vennsin_N{N}.png"
-    #     venntrig(
-    #         values,
-    #         class_names,
-    #         outfile=outfile,
-    #         height_scale=2.0,
-    #         curve_exponent=0.2,
-    #         amp_decay_base=0.8,
-    #         include_constant_last=True,
-    #     )
-        
-    # # Rectangular version (N=6..7) using default per-N palettes
-    # for N in range(2, 7):
-    #     print(f"Generating sine diagram for N={N}...")
-    #     values = _make_demo_values(N)
-    #     class_names = greek_names[:N]
-
-    #     outfile = f"img/venncos_N{N}.png"
-    #     venntrig(
-    #         values,
-    #         class_names,
-    #         outfile=outfile,
-    #         height_scale=2.0,
-    #         include_constant_last=True,
-    #         curve_exponent=0.2,
-    #         amp_decay_base=0.8,
-    #         curve_mode="cosine"
-    #     )
-
-    # vennfan version with your standard defaults
+    #             outfile = f"img/{curve_mode}{'_linear' if linear_scale else ''}_N{N}.png"
+    #             venntrig(
+    #                 values,
+    #                 class_names,
+    #                 outfile=outfile,
+    #                 height_scale=2.0,
+    #                 curve_exponent=0.2,
+    #                 amp_decay_base=0.8,
+    #                 include_constant_last=True,
+    #                 curve_mode=curve_mode,
+    #                 linear_scale=linear_scale,
+    #             )
     fontsizes = {
         2: (16, 20),
         3: (14, 18),
@@ -1278,48 +1565,31 @@ if __name__ == "__main__":
         9: 0.8,
         10: 0.3
     }
-    for N in range(2, 7):
-        print(f"Generating vennfan diagram for N={N}...")
-        values = _make_demo_values(N)
-        class_names = greek_names[:N]
-        class_names = ["" for _ in range(N)]
+    for curve_mode in ["cosine", "sine"]:
+        for linear_scale in [True, False]:
+            for N in range(6, 7):
+                print(f"Generating vennfan diagram for curve_mode={curve_mode} linear_scale={linear_scale} N={N}...")
+                # shape = (2,) * N
+                # values = np.empty(shape, dtype=object)
+                # class_names = ["" for _ in range(N)]
+                values = _make_demo_values(N)
+                class_names = greek_names[:N]
 
-        outfile = f"img/vennfan_N{N}.png"
-        vennfan(
-            values,
-            class_names,
-            outfile=outfile,
-            height_scale=2.0,
-            include_constant_last=True,
-            region_label_fontsize=fontsizes[N][0],
-            class_label_fontsize=fontsizes[N][1],
-            text_color="black",
-            curve_exponent=0.33,
-            amp_decay_base=0.75,
-            region_radial_offset_inside=0.02,
-            region_radial_offset_outside=0.02,
-            linewidth=linewidths[N]
-        )
-
-    for N in range(2, 7):
-        print(f"Generating vennfan diagram for N={N}...")
-        shape = (2,) * N
-        values = np.empty(shape, dtype=object)
-        class_names = ["" for _ in range(N)]
-
-        outfile = f"img/vennfan_plain_N{N}.png"
-        vennfan(
-            values,
-            class_names,
-            outfile=outfile,
-            height_scale=2.0,
-            include_constant_last=True,
-            region_label_fontsize=fontsizes[N][0],
-            class_label_fontsize=fontsizes[N][1],
-            text_color="black",
-            curve_exponent=0.25,
-            amp_decay_base=0.75,
-            region_radial_offset_inside=0.02,
-            region_radial_offset_outside=0.02,
-            linewidth=linewidths[N]
-        )
+                outfile = f"img/vennfan_{curve_mode}{'_linear' if linear_scale else ''}_N{N}.png"
+                vennfan(
+                    values,
+                    class_names,
+                    outfile=outfile,
+                    height_scale=2.0,
+                    include_constant_last=True,
+                    region_label_fontsize=fontsizes[N][0],
+                    class_label_fontsize=fontsizes[N][1],
+                    text_color="black",
+                    curve_exponent=0.2,
+                    amp_decay_base=0.8,
+                    region_radial_offset_inside=0.02,
+                    region_radial_offset_outside=0.02,
+                    linewidth=linewidths[N],
+                    curve_mode=curve_mode,
+                    linear_scale=linear_scale,
+                )
