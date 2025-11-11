@@ -11,6 +11,7 @@ def get_sine_curve(
     p: float = 0.33,
     lmbd: float = 0.75,
     linear: bool = True,
+    corrected: bool = False,
 ):
     """
     Nonlinear sine-like curve for class boundary (π-shifted).
@@ -24,7 +25,12 @@ def get_sine_curve(
         amp = (N-i-1) / N
     else:
         amp = lmbd ** (i+1)
-    return amp * np.sign(base) * np.abs(base) ** p
+    
+    sgn = np.sign(base)
+    curve = amp * sgn * np.abs(base) ** p
+    if i<1 and corrected:
+        return np.where(sgn<0, curve, 1)
+    return curve
 
 def get_cosine_curve(
     X,
@@ -33,6 +39,7 @@ def get_cosine_curve(
     p: float = 0.33,
     lmbd: float = 0.75,
     linear: bool = True,
+    corrected: bool = False,
 ):
     """
     Nonlinear cosine-like curve for class boundary (π-shifted).
@@ -47,4 +54,9 @@ def get_cosine_curve(
         amp = (N-i-1) / N
     else:
         amp = lmbd ** (i+1)
-    return amp * np.sign(base) * np.abs(base) ** p
+        
+    sgn = np.sign(base)
+    curve = amp * sgn * np.abs(base) ** p
+    if i<2 and corrected:
+        return np.where(sgn<0, curve, 1)
+    return curve
