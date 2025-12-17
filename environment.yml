@@ -7,3 +7,6 @@ dependencies:
   - numpy
   - scikit-image
   - matplotlib
+  - pip
+  - pip:
+    - tqdm
