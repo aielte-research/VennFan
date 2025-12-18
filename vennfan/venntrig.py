@@ -17,23 +17,23 @@ from matplotlib.figure import Figure
 
 from colors import _rgb
 from defaults import (
-    _default_palette_for_n,
-    _default_fontsize,
-    _default_linewidth,
+    default_palette_for_n,
+    default_fontsize,
+    default_linewidth,
 )
 from curves import get_sine_curve, get_cosine_curve
 from utils import (
-    _disjoint_region_masks,
-    _visual_center_margin,
-    _visual_center_inset,
-    _region_constant_line_bisector,
-    _exclusive_curve_bisector,
-    _shrink_text_font_to_region,
-    _harmonic_info_for_index,
+    disjoint_region_masks,
+    visual_center_margin,
+    visual_center_inset,
+    region_constant_line_bisector,
+    exclusive_curve_bisector,
+    shrink_text_font_to_region,
+    harmonic_info_for_index,
     compute_region_fontsizes,
     resolve_color_mixing,
-    _text_color_for_region,
-    _make_demo_values,
+    text_color_for_region,
+    make_demo_values,
 )
 
 
@@ -57,7 +57,10 @@ def venntrig(
     sample_res_y: int = 1000,
     include_constant_last: bool = True,
     p: float = 0.33,
-    amp_decay_base: float = 0.75,
+    decay: str = "linear", # "linear" or "exponential"
+    epsilon: Optional[float] = None,
+    delta: Optional[float] = None,
+    b: float = 0.8,
     linewidth: Optional[float] = None,
     curve_mode: str = "sine",
     height_scale: float = 2.0,
@@ -87,10 +90,10 @@ def venntrig(
 
     # ---- Linewidth & colors -------------------------------------------------
     if linewidth is None:
-        linewidth = _default_linewidth(N)
+        linewidth = default_linewidth(N)
 
     # Default palette for this N
-    default_fills, default_outlines = _default_palette_for_n(N)
+    default_fills, default_outlines = default_palette_for_n(N)
 
     # Fill colors for regions
     if colors is None:
@@ -111,7 +114,7 @@ def venntrig(
 
     # ---- Font sizes ---------------------------------------------------------
     if region_label_fontsize is None or class_label_fontsize is None:
-        base_fs_region, base_fs_class = _default_fontsize(N, linear_scale, curve_mode)
+        base_fs_region, base_fs_class = default_fontsize(N, linear_scale, curve_mode)
         if region_label_fontsize is None:
             region_label_fontsize = base_fs_region
         if class_label_fontsize is None:
@@ -142,8 +145,10 @@ def venntrig(
             i,
             N,
             p=p,
-            lmbd=amp_decay_base,
-            linear=linear_scale,
+            decay=decay,
+            epsilon=epsilon,
+            delta=delta,
+            b=b,
         )
         mask = Y >= curve_full
         curve_1d = curve_full[0, :]
@@ -151,7 +156,7 @@ def venntrig(
         curve_1d_list.append(curve_1d)
 
     # ---- Disjoint region masks ---------------------------------------------
-    region_masks = _disjoint_region_masks(membership)
+    region_masks = disjoint_region_masks(membership)
     H, W = X.shape
 
     # ---- Region areas & adaptive font sizes --------------------------------
@@ -207,7 +212,7 @@ def venntrig(
         zorder=1,
     )
     ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min+1/7, y_max)
+    ax.set_ylim(y_min, y_max)
     ax.set_aspect("auto")
     ax.set_xticks([])
     ax.set_yticks([])
@@ -227,7 +232,7 @@ def venntrig(
         curve_fn_plot = get_cosine_curve
 
     for i in range(N):
-        h_i, _ = _harmonic_info_for_index(i, N, include_constant_last)
+        h_i, _ = harmonic_info_for_index(i, N, include_constant_last)
         harmonics_for_class.append(h_i)
 
         y_plot = curve_fn_plot(
@@ -235,8 +240,10 @@ def venntrig(
             i,
             N,
             p=p,
-            lmbd=amp_decay_base,
-            linear=linear_scale,
+            decay=decay,
+            epsilon=epsilon,
+            delta=delta,
+            b=b,
         )
         curves.append(y_plot)
 
@@ -295,14 +302,14 @@ def venntrig(
         if value is None or not mask.any():
             continue
 
-        this_color = _text_color_for_region(key, region_rgbs, text_color)
+        this_color = text_color_for_region(key, region_rgbs, text_color)
         fs_here = region_fontsizes.get(key, float(region_label_fontsize))
         
         
 
         if region_label_placement == "visual_center":
             # Linear: visual centers, inset to avoid bbox (no rotation)
-            pos = _visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
+            pos = visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
             if pos is None:
                 continue
             x_lab, y_lab = pos
@@ -312,7 +319,7 @@ def venntrig(
         else:
             # Nonlinear: anchor at constant-line intersection bisector, rotated 90°
             last_bit = key[-1]
-            bis = _region_constant_line_bisector(mask, X, Y)
+            bis = region_constant_line_bisector(mask, X, Y)
             if bis is not None:
                 x_mid, y0 = bis  # y0 is 0.0
                 x_lab = x_mid
@@ -326,7 +333,7 @@ def venntrig(
                     ha = "right"
             else:
                 # Fallback: inset visual center, still rotated
-                pos = _visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
+                pos = visual_center_inset(mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2)
                 if pos is None:
                     continue
                 x_lab, y_lab = pos
@@ -336,7 +343,7 @@ def venntrig(
             va = "center"
 
         # Shrink fontsize if needed so text stays inside region
-        fs_adj = _shrink_text_font_to_region(
+        fs_adj = shrink_text_font_to_region(
             fig,
             ax,
             f"{value}",
@@ -374,15 +381,15 @@ def venntrig(
 
             if region_label_placement == "visual_center":
                 # Linear: use margin-based visual center, no rotation
-                pos = _visual_center_margin(all_mask, X, Y, margin_frac=0.05)
+                pos = visual_center_margin(all_mask, X, Y, margin_frac=0.05)
                 if pos is not None:
-                    this_color = _text_color_for_region(ones, region_rgbs, text_color)
+                    this_color = text_color_for_region(ones, region_rgbs, text_color)
                     x_lab, y_lab = pos
                     rot = 0.0
                     ha = "center"
                     va = "center"
 
-                    fs_adj = _shrink_text_font_to_region(
+                    fs_adj = shrink_text_font_to_region(
                         fig,
                         ax,
                         f"{val_all}",
@@ -412,15 +419,15 @@ def venntrig(
                     )
             else:
                 # Nonlinear: same constant-line bisector rule, rotated 90°
-                this_color = _text_color_for_region(ones, region_rgbs, text_color)
+                this_color = text_color_for_region(ones, region_rgbs, text_color)
 
-                bis = _region_constant_line_bisector(all_mask, X, Y)
+                bis = region_constant_line_bisector(all_mask, X, Y)
                 if bis is not None:
                     x_mid, y0 = bis  # y0 is 0.0
                     x_lab = x_mid
                     y_lab = y0 + region_offset
                 else:
-                    pos = _visual_center_inset(
+                    pos = visual_center_inset(
                         all_mask, X, Y, x_min, x_max, y_min, y_max, n_pix=2
                     )
                     if pos is None:
@@ -432,7 +439,7 @@ def venntrig(
                 ha = "left"
                 va = "center"
 
-                fs_adj = _shrink_text_font_to_region(
+                fs_adj = shrink_text_font_to_region(
                     fig,
                     ax,
                     f"{val_all}",
@@ -503,7 +510,7 @@ def venntrig(
         h_i = harmonics_for_class[i]
 
         # Preferred: analytic "exclusive-region" bisector along the class curve
-        bis = _exclusive_curve_bisector(
+        bis = exclusive_curve_bisector(
             i,
             x_plot,
             curves,
@@ -598,7 +605,7 @@ def venntrig(
 
 if __name__ == "__main__":
     # Simple test/demo: generate a grid of venntrig diagrams for N=1..8
-    os.makedirs("venntrig_img", exist_ok=True)
+    os.makedirs("img_venntrig", exist_ok=True)
     greek_names = [
         "Alpha", "Beta", "Gamma", "Delta", "Epsilon",
         "Zeta", "Eta", "Theta", "Iota", "Kappa",
@@ -606,23 +613,26 @@ if __name__ == "__main__":
 
     for curve_mode in ["cosine", "sine"]:
         for linear_scale in [True]:
-            for N in range(6, 7):
+            for N in range(1, 10):
                 print(
                     f"Generating venntrig diagram for "
                     f"curve_mode={curve_mode} linear_scale={linear_scale} N={N} ..."
                 )
-                values = _make_demo_values(N)
+                values = make_demo_values(N)
                 class_names = greek_names[:N]
-                class_names = [""]*N
+                #class_names = [""]*N
 
-                outfile = f"venntrig_img/{curve_mode}{'_linear' if linear_scale else ''}_N{N}.pdf"
+                outfile = f"venntrig_img/{curve_mode}{'_linear' if linear_scale else ''}_N{N}.png"
                 venntrig(
                     values,
                     class_names,
                     outfile=outfile,
                     height_scale=2.0,
-                    p=1/2,
-                    amp_decay_base=0.5,
+                    p=0.25,
+                    decay="linear", # "linear" or "exponential"
+                    epsilon=None,
+                    delta=None,
+                    b=0.8,
                     include_constant_last=True,
                     curve_mode=curve_mode,
                     linear_scale=linear_scale,
