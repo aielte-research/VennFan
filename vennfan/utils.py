@@ -10,6 +10,7 @@ This module contains:
 - half-plane → disc mapping helpers for vennfan
 - reusable logic for color mixing and adaptive font sizes
 - logic for region label placement modes (radial vs visual-center)
+- a rectangle-based visual_text_center placement helper
 """
 
 from typing import (
@@ -29,11 +30,11 @@ from matplotlib.figure import Figure
 from scipy.ndimage import distance_transform_edt
 
 from colors import (
-    _auto_text_color_from_rgb,
-    _color_mix_subtractive,
-    _color_mix_average,
-    _color_mix_hue_average,
-    _color_mix_alpha_stack,
+    auto_text_color_from_rgb,
+    color_mix_subtractive,
+    color_mix_average,
+    color_mix_hue_average,
+    color_mix_alpha_stack,
 )
 from defaults import _default_adaptive_fontsize
 
@@ -43,7 +44,7 @@ from defaults import _default_adaptive_fontsize
 # ---------------------------------------------------------------------------
 
 
-def _disjoint_region_masks(masks_list: Sequence[np.ndarray]) -> Dict[Tuple[int, ...], np.ndarray]:
+def disjoint_region_masks(masks_list: Sequence[np.ndarray]) -> Dict[Tuple[int, ...], np.ndarray]:
     """
     Given a list of boolean membership masks for N sets (each shaped HxW),
     return a dict mapping every binary tuple key of length N (e.g., (1,0,1,0))
@@ -58,7 +59,7 @@ def _disjoint_region_masks(masks_list: Sequence[np.ndarray]) -> Dict[Tuple[int, 
     return {tuple(map(int, k)): maskK[..., i] for i, k in enumerate(keys)}
 
 
-def _visual_center(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[float, float]]:
+def visual_center(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[float, float]]:
     """Visual center via Euclidean distance transform (SciPy)."""
     if not mask.any():
         return None
@@ -67,7 +68,7 @@ def _visual_center(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[T
     return float(X[yy, xx]), float(Y[yy, xx])
 
 
-def _centroid(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[float, float]]:
+def centroid(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[float, float]]:
     """Simple centroid of True pixels in mask."""
     if not mask.any():
         return None
@@ -75,7 +76,7 @@ def _centroid(mask: np.ndarray, X: np.ndarray, Y: np.ndarray) -> Optional[Tuple[
     return float(X[yy, xx].mean()), float(Y[yy, xx].mean())
 
 
-def _visual_center_margin(
+def visual_center_margin(
     mask: np.ndarray,
     X: np.ndarray,
     Y: np.ndarray,
@@ -99,14 +100,14 @@ def _visual_center_margin(
     m2[:, -margin_x:] = False
 
     if not m2.any():
-        return _visual_center(mask, X, Y)
+        return visual_center(mask, X, Y)
 
     dist = distance_transform_edt(m2)
     yy, xx = np.unravel_index(np.argmax(dist), m2.shape)
     return float(X[yy, xx]), float(Y[yy, xx])
 
 
-def _visual_center_inset(
+def visual_center_inset(
     mask: np.ndarray,
     X: np.ndarray,
     Y: np.ndarray,
@@ -151,9 +152,9 @@ def _visual_center_inset(
     mask_inset = mask & (X > inset_x_min) & (X < inset_x_max) & (Y > inset_y_min) & (Y < inset_y_max)
 
     if mask_inset.any():
-        pos = _visual_center(mask_inset, X, Y)
+        pos = visual_center(mask_inset, X, Y)
     else:
-        pos = _visual_center(mask, X, Y)
+        pos = visual_center(mask, X, Y)
 
     if pos is None:
         return None
@@ -165,7 +166,7 @@ def _visual_center_inset(
     return x_lab, y_lab
 
 
-def _region_constant_line_bisector(
+def region_constant_line_bisector(
     mask: np.ndarray,
     X: np.ndarray,
     Y: np.ndarray,
@@ -232,8 +233,7 @@ def _region_constant_line_bisector(
 # Text placement & sizing
 # ---------------------------------------------------------------------------
 
-
-def _shrink_text_font_to_region(
+def shrink_text_font_to_region(
     fig: Figure,
     ax,
     text: str,
@@ -247,38 +247,51 @@ def _shrink_text_font_to_region(
     ha: str = "center",
     va: str = "center",
     shrink_factor: float = 0.90,
-    min_fraction: float = 0.01,
+    min_fraction: float = 0.25,  # lower bound for how small we allow shrinking
     max_iterations: int = 12,
     erosion_radius_pix: Optional[float] = None,
+    debug_mode: bool = False,
 ) -> float:
     """
-    Given a region mask on grid (X, Y), shrink the fontsize by 10% steps
-    until a sample of points inside the text's bounding box all lie inside
-    the region. If it never fits, returns the last tried size.
+    Shrink fontsize so that the *rotated* text's bounding parallelogram lies
+    entirely inside `mask` (0 tolerance for crossing), up to sampling.
 
-    Before testing, the region mask is uniformly eroded by a distance
-    (in grid cells) ≈ linewidth * 1.5, passed as `erosion_radius_pix`,
-    to approximate the curve linewidth.
+    Implementation details
+    ----------------------
+    - Render UNROTATED text to get a tight bbox in display coords.
+    - Compute anchor position in display coords.
+    - Rotate bbox corners around anchor by `rotation` degrees.
+    - Transform rotated corners back to data coords → oriented parallelogram.
+    - Sample points inside that parallelogram and check that *all* those
+      samples lie inside `mask` (zero tolerance). If any sample lies outside,
+      shrink and retry.
+    - Optional safety margin:
+        * If `erosion_radius_pix` > 0, we erode `mask` uniformly by that
+          amount (in grid cells, approximating linewidth) using a distance
+          transform, and perform the inside-test against this eroded mask.
+          If erosion removes the region completely, we fall back to the
+          original mask.
+
+    If `debug_mode` is True, the accepted rotated bbox is drawn in red.
     """
     if base_fontsize <= 0.0:
         return base_fontsize
     if mask is None or not isinstance(mask, np.ndarray) or not mask.any():
         return base_fontsize
 
-    H, W = mask.shape
-
-    # --- Uniform erosion in pixel units (≈ linewidth * 1.5) ---
+    # --- Effective mask, possibly eroded by erosion_radius_pix -------------
+    mask_eff = mask
     if erosion_radius_pix is not None and erosion_radius_pix > 0.0:
         margin_pix = int(round(float(erosion_radius_pix)))
         if margin_pix > 0:
             dist_reg = distance_transform_edt(mask)
             mask_eroded = dist_reg >= margin_pix
             if mask_eroded.any():
-                mask = mask_eroded
+                mask_eff = mask_eroded
 
-    canvas = fig.canvas
-    renderer = canvas.get_renderer()
+    H, W = mask_eff.shape
 
+    # Grid spacing / origin in data coordinates
     xs_grid = X[0, :]
     ys_grid = Y[:, 0]
 
@@ -296,16 +309,37 @@ def _shrink_text_font_to_region(
         y0_grid = float(Y.min())
         dy = float((Y.max() - Y.min()) / max(H - 1, 1))
 
+    if dx == 0.0:
+        dx = 1.0
+    if dy == 0.0:
+        dy = 1.0
+
+    canvas = fig.canvas
+    renderer = canvas.get_renderer()
+    inv_trans = ax.transData.inverted()
+
+    # Anchor position in display coordinates
+    anchor_disp = ax.transData.transform((x, y))
+
     fs = float(base_fontsize)
     min_fs = max(0.1, float(base_fontsize) * float(min_fraction))
 
-    inv_trans = ax.transData.inverted()
+    # Sampling resolution inside oriented bbox
+    nx, ny = 21, 11
+
+    accepted_corners_data = None
+
+    # Rotation matrix in display coordinates
+    theta = np.deg2rad(rotation)
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
+    R_mat = np.array([[cos_t, -sin_t], [sin_t, cos_t]], dtype=float)
 
     for _ in range(max_iterations):
         if fs <= 0.0:
             break
 
-        # Create a temporary text object
+        # 1) Render UNROTATED text at this fontsize to measure its bbox
         t = ax.text(
             x,
             y,
@@ -313,48 +347,313 @@ def _shrink_text_font_to_region(
             ha=ha,
             va=va,
             fontsize=fs,
-            rotation=rotation,
+            rotation=0.0,          # measure without rotation
             rotation_mode="anchor",
         )
         t.set_clip_on(False)
 
-        # Compute bbox in display coords, then transform to data coords
         t.draw(renderer)
         bbox_disp = t.get_window_extent(renderer=renderer)
         t.remove()
 
-        bbox_data = bbox_disp.transformed(inv_trans)
-        x0d, y0d = bbox_data.x0, bbox_data.y0
-        x1d, y1d = bbox_data.x1, bbox_data.y1
+        # Axis-aligned bbox corners in display coords (unrotated)
+        x0d, y0d = bbox_disp.x0, bbox_disp.y0
+        x1d, y1d = bbox_disp.x1, bbox_disp.y1
+        corners_disp = np.array(
+            [
+                [x0d, y0d],
+                [x1d, y0d],
+                [x1d, y1d],
+                [x0d, y1d],
+            ],
+            dtype=float,
+        )
 
-        # Sample a small grid of points inside the bbox
-        nx, ny = 9, 5
-        xs_samp = np.linspace(x0d, x1d, nx)
-        ys_samp = np.linspace(y0d, y1d, ny)
+        # 2) Rotate corners around anchor in display coords
+        A = anchor_disp
+        rel = corners_disp - A[None, :]
+        rel_rot = rel @ R_mat.T
+        corners_disp_rot = A[None, :] + rel_rot
 
-        fits = True
-        for yy in ys_samp:
-            if not fits:
-                break
-            for xx in xs_samp:
-                ix = int(round((xx - x0_grid) / dx))
-                iy = int(round((yy - y0_grid) / dy))
-                if ix < 0 or ix >= W or iy < 0 or iy >= H:
-                    fits = False
-                    break
-                if not mask[iy, ix]:
-                    fits = False
-                    break
+        # 3) Transform rotated corners back to data coords
+        corners_data = inv_trans.transform(corners_disp_rot)
+        p0 = corners_data[0]
+        p1 = corners_data[1]
+        p3 = corners_data[3]
 
-        if fits or fs <= min_fs:
-            return max(fs, min_fs)
+        v_w = p1 - p0
+        v_h = p3 - p0
+
+        if np.allclose(v_w, 0) or np.allclose(v_h, 0):
+            fs = max(fs, min_fs)
+            accepted_corners_data = corners_data
+            break
+
+        # 4) Sample points inside oriented parallelogram
+        s_vals = np.linspace(0.0, 1.0, nx)
+        t_vals = np.linspace(0.0, 1.0, ny)
+        S, T = np.meshgrid(s_vals, t_vals)
+        P = (
+            p0[None, None, :]
+            + S[..., None] * v_w[None, None, :]
+            + T[..., None] * v_h[None, None, :]
+        )
+        xs_flat = P[..., 0].ravel()
+        ys_flat = P[..., 1].ravel()
+
+        # 5) Map sample points to mask grid indices
+        fx = (xs_flat - x0_grid) / dx
+        fy = (ys_flat - y0_grid) / dy
+
+        ix0 = np.floor(fx).astype(int)
+        iy0 = np.floor(fy).astype(int)
+        ix1 = ix0 + 1
+        iy1 = iy0 + 1
+
+        inside = np.ones_like(xs_flat, dtype=bool)
+
+        # Only sample where fully in bounds
+        in_bounds = (
+            (ix0 >= 0)
+            & (iy0 >= 0)
+            & (ix1 < W)
+            & (iy1 < H)
+        )
+
+        # If any sample point falls outside the grid at all, we already know
+        # this bbox is not acceptable under 0-tolerance:
+        if not np.all(in_bounds):
+            inside[:] = False
+        else:
+            fx_in = fx[in_bounds]
+            fy_in = fy[in_bounds]
+            ix0_in = ix0[in_bounds]
+            iy0_in = iy0[in_bounds]
+            ix1_in = ix1[in_bounds]
+            iy1_in = iy1[in_bounds]
+
+            tx = fx_in - ix0_in
+            ty = fy_in - iy0_in
+
+            w00 = (1.0 - tx) * (1.0 - ty)
+            w10 = tx * (1.0 - ty)
+            w01 = (1.0 - tx) * ty
+            w11 = tx * ty
+
+            m00 = mask_eff[iy0_in, ix0_in].astype(float)
+            m10 = mask_eff[iy0_in, ix1_in].astype(float)
+            m01 = (mask_eff[i1_in := iy1_in, ix0_in]).astype(float)
+            m11 = (mask_eff[i1_in, ix1_in]).astype(float)
+
+            val = w00 * m00 + w10 * m10 + w01 * m01 + w11 * m11
+            inside[in_bounds] = val >= 0.5
+
+        # Zero tolerance: all sampled points must be inside
+        all_inside = bool(inside.all())
+
+        if all_inside or fs <= min_fs:
+            fs = max(fs, min_fs)
+            accepted_corners_data = corners_data
+            break
 
         fs *= float(shrink_factor)
 
-    return max(fs, min_fs)
+    if fs < min_fs:
+        fs = min_fs
+
+    # Debug: plot accepted rotated bbox in red
+    if debug_mode and accepted_corners_data is not None:
+        xs_box = accepted_corners_data[:, 0]
+        ys_box = accepted_corners_data[:, 1]
+        xs_box_closed = np.concatenate([xs_box, xs_box[:1]])
+        ys_box_closed = np.concatenate([ys_box, ys_box[:1]])
+        ax.plot(
+            xs_box_closed,
+            ys_box_closed,
+            linestyle="-",
+            linewidth=0.5,
+            color="red",
+            zorder=10,
+        )
+
+    return fs
 
 
-def _text_color_for_region(
+def visual_text_center(
+    mask: np.ndarray,
+    X: np.ndarray,
+    Y: np.ndarray,
+    rectangle_width: float,
+    n_angles: int = 72,
+) -> Optional[Tuple[float, float, float]]:
+    """
+    Rectangle-based "visual text center" placement.
+
+    Given:
+        - mask : boolean array (H, W) defining the region,
+        - (X, Y) : sampling grid in data coordinates,
+        - rectangle_width : width of a rectangle in *data units*,
+
+    this function approximates the placement of the *longest* rectangle with
+    that fixed width that can fit inside the region:
+
+        * First, erode the region by rectangle_width / 2 (in data units),
+          via distance_transform_edt in pixel space, giving a "core" region
+          where the rectangle can safely fit laterally.
+        * Choose an interior anchor at the pixel with the largest distance
+          to the boundary in this eroded region.
+        * For a set of angles theta in [0, pi), extend a line segment through
+          that anchor in both directions until it leaves the eroded region.
+        * For each angle, this gives a maximal segment; pick the one with
+          the greatest length.
+        * Return (x_center, y_center, rotation_degrees) where:
+              - (x_center, y_center) is the midpoint of that segment
+              - rotation_degrees is the angle of the segment, normalized to
+                about [-90, +90] via normalize_angle_90.
+
+    The returned rotation is intended as the text rotation; the text can then
+    be shrunk to fit the region using shrink_text_font_to_region.
+    """
+    if not mask.any():
+        return None
+
+    # Degenerate width → fall back to plain visual center with no rotation
+    if rectangle_width <= 0.0:
+        vc = visual_center(mask, X, Y)
+        if vc is None:
+            return None
+        return vc[0], vc[1], 0.0
+
+    H, W = mask.shape
+
+    # Distance transform on the raw mask (pixel units)
+    dist = distance_transform_edt(mask)
+
+    xs_grid = X[0, :]
+    ys_grid = Y[:, 0]
+
+    if xs_grid.size > 1:
+        dx = xs_grid[1] - xs_grid[0]
+        x0_grid = xs_grid[0]
+    else:
+        dx = 1.0
+        x0_grid = float(xs_grid[0]) if xs_grid.size else 0.0
+
+    if ys_grid.size > 1:
+        dy = ys_grid[1] - ys_grid[0]
+        y0_grid = ys_grid[0]
+    else:
+        dy = 1.0
+        y0_grid = float(ys_grid[0]) if ys_grid.size else 0.0
+
+    # Approximate data-units → pixel-units scale
+    scale_data_per_pixel = max(float(min(abs(dx), abs(dy))), 1e-9)
+
+    # Margin in pixels for half-width
+    margin_pix = float(rectangle_width) / (2.0 * scale_data_per_pixel)
+
+    # Core region where the rectangle's width can fit
+    core_mask = dist >= margin_pix
+
+    if not core_mask.any():
+        # Width too large for this region; fall back to plain visual center
+        vc = visual_center(mask, X, Y)
+        if vc is None:
+            return None
+        return vc[0], vc[1], 0.0
+
+    # Anchor: the most interior point of the core region
+    dist_core = dist.copy()
+    dist_core[~core_mask] = -1.0
+    max_core = dist_core.max()
+    if max_core <= 0.0:
+        vc = visual_center(mask, X, Y)
+        if vc is None:
+            return None
+        return vc[0], vc[1], 0.0
+
+    iy0, ix0 = np.unravel_index(np.argmax(dist_core), dist_core.shape)
+    x_anchor = float(X[iy0, ix0])
+    y_anchor = float(Y[iy0, ix0])
+
+    # Step size in data units (roughly one pixel)
+    step_x = abs(dx)
+    step_y = abs(dy)
+    step = float(min(step_x, step_y))
+    if step <= 0.0:
+        step = 1.0
+
+    # Rough upper bound on how many steps we might need
+    span_x = float(X.max() - X.min()) if X.size else 1.0
+    span_y = float(Y.max() - Y.min()) if Y.size else 1.0
+    max_span = float(np.hypot(span_x, span_y))
+    max_steps = max(1, int(max_span / step) + 3)
+
+    # Angle sampling (0..pi because theta and theta+pi give the same line)
+    angles = np.linspace(0.0, np.pi, int(n_angles), endpoint=False)
+
+    best_length = -1.0
+    best_center_x = x_anchor
+    best_center_y = y_anchor
+    best_angle = 0.0
+
+    for theta in angles:
+        ct = float(np.cos(theta))
+        st = float(np.sin(theta))
+
+        # Forward direction (+)
+        steps_plus = 0
+        x_plus = x_anchor
+        y_plus = y_anchor
+        for _ in range(max_steps):
+            x_try = x_plus + step * ct
+            y_try = y_plus + step * st
+            ix = int(round((x_try - x0_grid) / dx)) if xs_grid.size > 1 else ix0
+            iy = int(round((y_try - y0_grid) / dy)) if ys_grid.size > 1 else iy0
+            if ix < 0 or ix >= W or iy < 0 or iy >= H:
+                break
+            if not core_mask[iy, ix]:
+                break
+            x_plus = x_try
+            y_plus = y_try
+            steps_plus += 1
+
+        # Backward direction (-)
+        steps_minus = 0
+        x_minus = x_anchor
+        y_minus = y_anchor
+        for _ in range(max_steps):
+            x_try = x_minus - step * ct
+            y_try = y_minus - step * st
+            ix = int(round((x_try - x0_grid) / dx)) if xs_grid.size > 1 else ix0
+            iy = int(round((y_try - y0_grid) / dy)) if ys_grid.size > 1 else iy0
+            if ix < 0 or ix >= W or iy < 0 or iy >= H:
+                break
+            if not core_mask[iy, ix]:
+                break
+            x_minus = x_try
+            y_minus = y_try
+            steps_minus += 1
+
+        # Segment endpoints and length
+        cx = 0.5 * (x_plus + x_minus)
+        cy = 0.5 * (y_plus + y_minus)
+        length = float(np.hypot(x_plus - x_minus, y_plus - y_minus))
+
+        if length > best_length:
+            best_length = length
+            best_center_x = cx
+            best_center_y = cy
+            best_angle = theta
+
+    # Normalize angle into [-90, +90] for text rotation
+    angle_deg = float(np.degrees(best_angle))
+    angle_deg_norm = normalize_angle_90(angle_deg)
+
+    return best_center_x, best_center_y, angle_deg_norm
+
+
+def text_color_for_region(
     key: Tuple[int, ...],
     region_rgbs: Dict[Tuple[int, ...], np.ndarray],
     text_color: Optional[str],
@@ -371,7 +670,7 @@ def _text_color_for_region(
     rgb = region_rgbs.get(key)
     if rgb is None:
         return default
-    return _auto_text_color_from_rgb(rgb)
+    return auto_text_color_from_rgb(rgb)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +678,7 @@ def _text_color_for_region(
 # ---------------------------------------------------------------------------
 
 
-def _harmonic_info_for_index(
+def harmonic_info_for_index(
     i: int,
     N: int,
     include_constant_last: bool,
@@ -411,7 +710,7 @@ def _harmonic_info_for_index(
     return h_i, h_max
 
 
-def _exclusive_curve_bisector(
+def exclusive_curve_bisector(
     i: int,
     x_plot: np.ndarray,
     curves: Sequence[np.ndarray],
@@ -512,7 +811,7 @@ def _exclusive_curve_bisector(
     return float(x_mid), float(y_mid)
 
 
-def _normalize_angle_90(deg: float) -> float:
+def normalize_angle_90(deg: float) -> float:
     """
     Map any angle (deg) to an equivalent in about [-90, +90] for legible text.
     """
@@ -582,22 +881,22 @@ def resolve_color_mixing(
     # Built-in mixing modes from colors.py
     if color_mixing == "subtractive":
         def cb(colors: Sequence[np.ndarray], present: Optional[Sequence[bool]] = None) -> np.ndarray:
-            return _color_mix_subtractive(colors, present)
+            return color_mix_subtractive(colors, present)
         return cb
 
     if color_mixing == "average":
         def cb(colors: Sequence[np.ndarray], present: Optional[Sequence[bool]] = None) -> np.ndarray:
-            return _color_mix_average(colors, present)
+            return color_mix_average(colors, present)
         return cb
 
     if color_mixing == "hue_average":
         def cb(colors: Sequence[np.ndarray], present: Optional[Sequence[bool]] = None) -> np.ndarray:
-            return _color_mix_hue_average(colors, float(N), present)
+            return color_mix_hue_average(colors, float(N), present)
         return cb
 
     if color_mixing == "alpha_stack":
         def cb(colors: Sequence[np.ndarray], present: Optional[Sequence[bool]] = None) -> np.ndarray:
-            return _color_mix_alpha_stack(colors, present)
+            return color_mix_alpha_stack(colors, present)
         return cb
 
     raise ValueError(f"Unrecognized color_mixing string: {color_mixing!r}")
@@ -673,7 +972,7 @@ def compute_region_fontsizes(
 # ---------------------------------------------------------------------------
 
 
-def _halfplane_to_disc(
+def halfplane_to_disc(
     x: np.ndarray,
     y: np.ndarray,
     radius: float,
@@ -719,7 +1018,7 @@ def _halfplane_to_disc(
     return u, v
 
 
-def _second_radial_intersection(
+def second_radial_intersection(
     u_curve: np.ndarray,
     v_curve: np.ndarray,
     angle_rad: float,
@@ -790,7 +1089,7 @@ def _second_radial_intersection(
     return intersections[j]
 
 
-def _arc_angle_for_region(
+def arc_angle_for_region(
     mask: np.ndarray,
     circle_band: np.ndarray,
     theta: np.ndarray,
@@ -848,13 +1147,13 @@ def _arc_angle_for_region(
                     return float(angle)
 
     # Fallback: angle of visual center
-    pos_vc = _visual_center(mask, U, V)
+    pos_vc = visual_center(mask, U, V)
     if pos_vc is None:
         return None
     return float(np.arctan2(pos_vc[1], pos_vc[0]))
 
 
-def _radial_segment_center_for_region(
+def radial_segment_center_for_region(
     mask: np.ndarray,
     angle_rad: float,
     u_min: float,
@@ -915,8 +1214,8 @@ def region_label_mode_for_key(
     key: Tuple[int, ...],
     N: int,
     region_label_placement: str,
-    pivot_index_outside: int = 4,
-    pivot_index_inside: int = 2,
+    pivot_index_outside: int = 5,
+    pivot_index_inside: int = 3,
 ) -> str:
     """
     Decide label placement mode ('radial' vs 'visual_center') for a given region.
@@ -962,7 +1261,7 @@ def region_label_mode_for_key(
 # ---------------------------------------------------------------------------
 
 
-def _make_demo_values(N: int) -> np.ndarray:
+def make_demo_values(N: int) -> np.ndarray:
     """
     Label each region by which sets it belongs to, e.g. "", "A", "BC", "ABCDE", etc.
     For testing, the complement (all zeros) is normally left as None.

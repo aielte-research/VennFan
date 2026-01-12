@@ -91,6 +91,8 @@ def get_sine_curve(
                 delta = 1 / N
             amp = 1 - epsilon + i*(delta+epsilon-1) / (N-2)
     elif decay == "exponential":
+        if epsilon is None:
+            epsilon = 0.2
         amp = b ** (i+epsilon)
     else:
         raise ValueError("decay must be 'linear' or 'exponential'")
@@ -187,6 +189,8 @@ def get_cosine_curve(
                 delta = 1 / N
             amp = 1 - epsilon + i*(delta+epsilon-1) / (N-2)
     elif decay == "exponential":
+        if epsilon is None:
+            epsilon = 0.2
         amp = b ** (i+epsilon)
     else:
         raise ValueError("decay must be 'linear' or 'exponential'")

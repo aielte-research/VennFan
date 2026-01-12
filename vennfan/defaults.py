@@ -14,6 +14,7 @@ FILL_COLORS: Dict[int, List[str]] = {
     6:  ["#BFFF7E", "#FFC082", "#FF7FBF", "#BD7BFF", "#82C1FF", "#7DFFBE"],
     7:  ["#7CE9FF", "#8682FF", "#F081FF", "#FF7FA1", "#FFCB7D", "#C2FF7D", "#84FFAB"],
     8:  ["#86FFED", "#80B3FF", "#AF84FF", "#FF83F3", "#FF8396", "#FFCC80", "#D2FF7F", "#81FF8E"],
+    #8:  ["#00A68D", "#003E9B", "#3900A2", "#9F008F", "#9E0018", "#A36200", "#68A100", "#00A310"],
     9:  ["#84FFCE", "#86DFFF", "#848CFF", "#CF87FF", "#FF80DD", "#FF858D", "#FFCE85", "#DDFF7F", "#88FF80"],
 }
 
@@ -23,13 +24,13 @@ OUTLINE_COLORS: Dict[int, List[str]] = {
     3: ["#004c83", "#803c00", "#007c00"],
     4: ["#008383", "#3F007E", "#7B0000", "#3F7E00"],
     5: ["#008585", "#1B0085", "#84004F", "#7D4B00", "#187A00"],
-    6: ["#438600", "#844200", "#8A0045", "#440087", "#004284","#008341"],
+    6: ["#56AB00", "#A55300", "#9D004E", "#5300A5", "#004F9E","#00A151"],
     7: ["#007926", "#006579", "#040079", "#710080", "#850023", "#7D4B00", "#407800"],
-    8: ["#008470", "#003482", "#2B007C", "#7C006F", "#820013", "#865000", "#588700", "#00860D"],
+    8: ["#00A68D", "#003E9B", "#3900A2", "#9F008F", "#9E0018", "#A36200", "#68A100", "#00A310"],
     9: ["#00814E", "#005E80", "#000985", "#4D0080", "#790058", "#850009", "#814E00", "#638700", "#098300"],
 }
 
-def _default_palette_for_n(N: int) -> Tuple[List[str], List[str]]:
+def default_palette_for_n(N: int) -> Tuple[List[str], List[str]]:
     """
     Return (fill_colors, outline_colors) for a given N, using explicit
     per-N lists. If N not in dict, clamp to nearest defined N.
@@ -58,7 +59,7 @@ def _default_palette_for_n(N: int) -> Tuple[List[str], List[str]]:
 
     return fills, outlines
 
-def _default_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tuple[float, float]:
+def default_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tuple[float, float]:
     class_fontsizes = {
         1: 20,
         2: 20,
@@ -77,8 +78,8 @@ def _default_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tu
                 2: 14,
                 3: 12,
                 4: 10,
-                5: 8,
-                6: 8,
+                5: 10,
+                6: 9.5,
                 7: 6,
                 8: 4,
                 9: 1,
@@ -90,7 +91,7 @@ def _default_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tu
                 3: 20,
                 4: 18,
                 5: 12,
-                6: 9,
+                6: 11,
                 7: 6,
                 8: 3.5,
                 9: 2,
@@ -115,7 +116,7 @@ def _default_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tu
                 3: 20,
                 4: 18,
                 5: 12,
-                6: 12,
+                6: 11,
                 7: 6,
                 8: 3.5,
                 9: 2,
@@ -136,7 +137,7 @@ def _default_adaptive_fontsize(N: int, linear_scale:bool=True, curve_mode="cosin
     }
     return fontsizes[N]
 
-def _default_linewidth(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tuple[float, float]:
+def default_linewidth(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tuple[float, float]:
     linewidths = {
         1: 6,
         2: 5.0,

@@ -10,13 +10,13 @@ def _rgb(color: Union[str, tuple]) -> np.ndarray:
     return np.array(to_rgb(color), float)
 
 
-def _auto_text_color_from_rgb(rgb: np.ndarray) -> str:
+def auto_text_color_from_rgb(rgb: np.ndarray) -> str:
     """Choose black or white text based on background luminance."""
     lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     return "white" if lum < 0.5 else "black"
 
 
-def _color_mix_average(
+def color_mix_average(
     colors: Sequence[np.ndarray],
     present: Optional[Sequence[bool]] = None,
 ) -> np.ndarray:
@@ -37,7 +37,7 @@ def _color_mix_average(
     return arr.mean(axis=0)
 
 
-def _color_mix_subtractive(
+def color_mix_subtractive(
     colors: Sequence[np.ndarray],
     present: Optional[Sequence[bool]] = None,
 ) -> np.ndarray:
@@ -57,7 +57,7 @@ def _color_mix_subtractive(
     return np.abs(1.0 - (np.prod(1 - arr, axis=0)) * (len(colors) ** 0.25))
 
 
-def _color_mix_hue_average(
+def color_mix_hue_average(
     colors: Sequence[np.ndarray],
     n: float,
     present: Optional[Sequence[bool]] = None,
@@ -120,11 +120,10 @@ def _color_mix_hue_average(
     return mixed_rgb
 
 
-def _color_mix_alpha_stack(
+def color_mix_alpha_stack(
     colors: Sequence[np.ndarray],
     present: Optional[Sequence[bool]] = None,
     alpha: float = 0.5,
-    reverse: bool = False,
 ) -> np.ndarray:
     """
     Mix colors by stacking them with a fixed per-layer alpha.

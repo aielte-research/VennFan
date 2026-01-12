@@ -7,6 +7,7 @@ dependencies:
   - numpy
   - scikit-image
   - matplotlib
+  - pyyaml
   - pip
   - pip:
     - tqdm
