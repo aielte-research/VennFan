@@ -8,6 +8,8 @@ This module provides a function for creating VennFan Matplotlib figures for up t
 
 ![vennfan_sine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_sine_N7.png?raw=true "vennfan_sine_N7")
 
+![vennfan_cosine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_N7.png?raw=true "vennfan_cosine_N7")
+
 ## Installation
 ```
 pip install vennfan
