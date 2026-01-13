@@ -1,9 +1,5 @@
-import sys
-sys.path.append("./vennfan")
-
 import os
-from utils import make_demo_values
-from venntrig import venntrig
+from vennfan import venntrig, make_demo_values
 import numpy as np
 
 if __name__ == "__main__":

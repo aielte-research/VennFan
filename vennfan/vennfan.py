@@ -20,14 +20,14 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from scipy.ndimage import distance_transform_edt
 
-from colors import _rgb
-from defaults import (
+from .colors import _rgb
+from .defaults import (
     default_palette_for_n,
     default_fontsize,
     default_linewidth,
 )
-from curves import get_sine_curve, get_cosine_curve, vennfan_find_extrema
-from utils import (
+from .curves import get_sine_curve, get_cosine_curve, vennfan_find_extrema
+from .utils import (
     disjoint_region_masks,
     visual_center,
     arc_angle_for_region,
@@ -40,7 +40,6 @@ from utils import (
     region_label_mode_for_key,
     shrink_text_font_to_region,
     text_color_for_region,
-    make_demo_values,
 )
 
 

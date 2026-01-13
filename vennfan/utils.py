@@ -29,14 +29,14 @@ import numpy as np
 from matplotlib.figure import Figure
 from scipy.ndimage import distance_transform_edt
 
-from colors import (
+from .colors import (
     auto_text_color_from_rgb,
     color_mix_subtractive,
     color_mix_average,
     color_mix_hue_average,
     color_mix_alpha_stack,
 )
-from defaults import _default_adaptive_fontsize
+from .defaults import _default_adaptive_fontsize
 
 
 # ---------------------------------------------------------------------------

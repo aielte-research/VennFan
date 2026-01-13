@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from scipy.ndimage import distance_transform_edt
 
-from colors import _rgb
-from defaults import default_palette_for_n
-from curves import get_sine_curve, get_cosine_curve
-from utils import (
+from .colors import _rgb
+from .defaults import default_palette_for_n
+from .curves import get_sine_curve, get_cosine_curve
+from .utils import (
     disjoint_region_masks,
     visual_center_margin,
     visual_center_inset,
