@@ -300,53 +300,45 @@ def vennfan_find_extrema(
     if curve_mode == "sine":
         # x_max from i=0  (maximize u)
         i_xmax = 0
-        a, b = 0.0, np.pi
-        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), a, b)
+        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), 0.0, np.pi)
         x_max = _u_of_X(x_at, i_xmax)
 
         # x_min from i=0  (minimize u)
         i_xmin = 0
-        a, b = 0.0, np.pi
-        x_at = fminbound(lambda X: _u_of_X(X, i_xmin), a, b)
+        x_at = fminbound(lambda X: _u_of_X(X, i_xmin), 0.0, np.pi)
         x_min = _u_of_X(x_at, i_xmin)
 
         # y_max from i=0  (maximize v)
         i_ymax = 0
-        a, b = 0.0, np.pi
-        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), a, b)
+        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), 0.0, np.pi)
         y_max = _v_of_X(x_at, i_ymax)
 
         # y_min from i=1  (minimize v)
         i_ymin = 1
-        a, b = np.pi, np.pi*3/2
-        x_at = fminbound(lambda X: _v_of_X(X, i_ymin), a, b)
+        x_at = fminbound(lambda X: _v_of_X(X, i_ymin), np.pi, np.pi*3/2)
         y_min = _v_of_X(x_at, i_ymin)
 
     else:  # curve_mode == "cosine"
         # x_max from i=0  (maximize u)
         i_xmax = 0
-        a, b = 0.0, np.pi
-        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), a, b)
+        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), 0.0, np.pi)
         x_max = _u_of_X(x_at, i_xmax)
 
         # y_max from i=0  (maximize v)
         i_ymax = 0
-        a, b = 0.0, np.pi
-        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), a, b)
+        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), 0.0, np.pi)
         y_max = _v_of_X(x_at, i_ymax)
 
         # x_min from i=1  (minimize u)
         x_min = 0
         for i_xmin in [0,1]:
-            a, b = np.pi/2, np.pi*3/2
-            x_at = fminbound(lambda X: _u_of_X(X, i_xmin), a, b)
+            x_at = fminbound(lambda X: _u_of_X(X, i_xmin), np.pi/2, np.pi*3/2)
             x_min = min(_u_of_X(x_at, i_xmin), x_min)
 
         # y_min from i=2  (minimize v)
         y_min = 0
         for i_ymin in [1,2]:
-            a, b = np.pi*5/4, np.pi*7/4
-            x_at = fminbound(lambda X: _v_of_X(X, i_ymin), a, b)
+            x_at = fminbound(lambda X: _v_of_X(X, i_ymin), np.pi*5/4, np.pi*7/4)
             y_min = min(_v_of_X(x_at, i_ymin), y_min)
 
     return float(x_min), float(x_max), float(y_min), float(y_max)
