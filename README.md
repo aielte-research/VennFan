@@ -1,5 +1,5 @@
 ![Python 3x](https://img.shields.io/badge/python-3.x-blue.svg)
-[![pypi](https://img.shields.io/pypi/v/yamvp.svg)](https://pypi.org/project/yamvp/)
+[![pypi](https://img.shields.io/pypi/v/vennfan.svg)](https://pypi.org/project/vennfan/)
 # VennFan
 ## Overview
 We introduce VennFan, a method for generating n-set Venn diagrams based on the polar coordinate projection of trigonometric boundaries, resulting in Venn diagrams that resemble a set of fan blades.

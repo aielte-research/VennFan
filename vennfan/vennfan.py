@@ -54,7 +54,6 @@ def vennfan(
     outline_colors: Optional[Sequence[Union[str, tuple]]] = None,
     color_mixing: Union[str, Callable] = "average",
     text_color: Optional[str] = None,
-    # NEW: radial interior highlighting via erosion levels
     highlight_colors: Optional[float] = None,
     # Boundary curves / geometry
     curve_mode: str = "cosine",
