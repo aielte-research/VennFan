@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="vennfan",
-    version="0.0.2",
+    version="0.0.3",
     author="Bálint Csanády",
     python_requires='>3.6',
     author_email="csbalint@protonmail.ch",
@@ -17,11 +17,15 @@ setup(
     keywords=
     "Venn, Venn diagram, Matplotlib, 6 sets, 7 sets, 8 sets, visualization, plotting",
     packages=find_packages(),
+    include_package_data=True,
+    package_data={
+        "vennfan": ["*.yaml"],
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Topic :: Scientific/Engineering :: Mathematics",
     ],
-    install_requires=["numpy", "scikit-image", "matplotlib", "shapely"],
+    install_requires=["numpy", "scikit-image", "matplotlib", "shapely", "pyyaml"],
 )
