@@ -228,20 +228,20 @@ def vennfan_find_extrema(
 
     Search strategy (heuristics)
     ----------------------------
-    To reduce the number of optimizations, extrema are searched using only a small set
-    of curve indices ``i`` and restricted X-ranges:
+    Extrema are searched by bounded 1D optimization over restricted X-ranges, and for
+    each extremum the result is taken over all curve indices i ∈ {0, ..., N-1}:
 
     - ``curve_mode == "sine"``
-        * x_max: maximize u(X) using i=0 over X ∈ [0, π]
-        * x_min: minimize u(X) using i=0 over X ∈ [0, π]
-        * y_max: maximize v(X) using i=0 over X ∈ [0, π]
-        * y_min: minimize v(X) using i=1 over X ∈ [π, 3π/2]
+        * x_max: maximize u(X) over i=0..N-1 on X ∈ [0, π]
+        * x_min: minimize u(X) over i=0..N-1 on X ∈ [0, π]
+        * y_max: maximize v(X) over i=0..N-1 on X ∈ [0, π]
+        * y_min: minimize v(X) over i=0..N-1 on X ∈ [π, 3π/2]
 
     - ``curve_mode == "cosine"``
-        * x_max: maximize u(X) using i=0 over X ∈ [0, π]
-        * y_max: maximize v(X) using i=0 over X ∈ [0, π]
-        * x_min: minimize u(X) using i ∈ {0, 1} over X ∈ [π/2, 3π/2] (take the minimum)
-        * y_min: minimize v(X) using i ∈ {1, 2} over X ∈ [5π/4, 7π/4] (take the minimum)
+        * x_max: maximize u(X) over i=0..N-1 on X ∈ [0, π]
+        * y_max: maximize v(X) over i=0..N-1 on X ∈ [0, π]
+        * x_min: minimize u(X) over i=0..N-1 on X ∈ [π/2, 3π/2]
+        * y_min: minimize v(X) over i=0..N-1 on X ∈ [5π/4, 7π/4]
 
     Parameters
     ----------
@@ -275,8 +275,8 @@ def vennfan_find_extrema(
     -----
     - Extrema are approximations produced by ``scipy.optimize.fminbound`` on the
       specified intervals; they are not guaranteed to be global extrema over X ∈ [0, 2π].
-    - The chosen i-values and intervals encode assumptions about where the relevant
-      extrema occur for the vennfan construction.
+    - The chosen X-intervals encode assumptions about where the relevant extrema occur
+      for the vennfan construction.
     """
     if p <= 0:
         raise ValueError("p must be > 0.")
@@ -297,48 +297,28 @@ def vennfan_find_extrema(
         rho = 1.0 - y_old
         return rho * np.sin(X)
 
-    if curve_mode == "sine":
-        # x_max from i=0  (maximize u)
-        i_xmax = 0
-        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), 0.0, np.pi)
-        x_max = _u_of_X(x_at, i_xmax)
+    # x_max: maximize u over i=0..N-1 on [0, pi]
+    x_max = -np.inf
+    for i_xmax in range(N):
+        x_at = fminbound(lambda X, ii=i_xmax: -_u_of_X(X, ii), -np.pi/4, np.pi/4)
+        x_max = max(x_max, _u_of_X(x_at, i_xmax))
 
-        # x_min from i=0  (minimize u)
-        i_xmin = 0
-        x_at = fminbound(lambda X: _u_of_X(X, i_xmin), 0.0, np.pi)
-        x_min = _u_of_X(x_at, i_xmin)
+    # x_min: minimize u over i=0..N-1 on [0, pi]
+    x_min = np.inf
+    for i_xmin in range(N):
+        x_at = fminbound(lambda X, ii=i_xmin: _u_of_X(X, ii), np.pi*3/4, np.pi * 5/ 4)
+        x_min = min(x_min, _u_of_X(x_at, i_xmin))
 
-        # y_max from i=0  (maximize v)
-        i_ymax = 0
-        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), 0.0, np.pi)
-        y_max = _v_of_X(x_at, i_ymax)
+    # y_max: maximize v over i=0..N-1 on [0, pi]
+    y_max = -np.inf
+    for i_ymax in range(N):
+        x_at = fminbound(lambda X, ii=i_ymax: -_v_of_X(X, ii), np.pi/4, np.pi*3/4)
+        y_max = max(y_max, _v_of_X(x_at, i_ymax))
 
-        # y_min from i=1  (minimize v)
-        i_ymin = 1
-        x_at = fminbound(lambda X: _v_of_X(X, i_ymin), np.pi, np.pi*3/2)
-        y_min = _v_of_X(x_at, i_ymin)
-
-    else:  # curve_mode == "cosine"
-        # x_max from i=0  (maximize u)
-        i_xmax = 0
-        x_at = fminbound(lambda X: -_u_of_X(X, i_xmax), 0.0, np.pi)
-        x_max = _u_of_X(x_at, i_xmax)
-
-        # y_max from i=0  (maximize v)
-        i_ymax = 0
-        x_at = fminbound(lambda X: -_v_of_X(X, i_ymax), 0.0, np.pi)
-        y_max = _v_of_X(x_at, i_ymax)
-
-        # x_min from i=1  (minimize u)
-        x_min = 0
-        for i_xmin in [0,1]:
-            x_at = fminbound(lambda X: _u_of_X(X, i_xmin), np.pi/2, np.pi*3/2)
-            x_min = min(_u_of_X(x_at, i_xmin), x_min)
-
-        # y_min from i=2  (minimize v)
-        y_min = 0
-        for i_ymin in [1,2]:
-            x_at = fminbound(lambda X: _v_of_X(X, i_ymin), np.pi*5/4, np.pi*7/4)
-            y_min = min(_v_of_X(x_at, i_ymin), y_min)
+    # y_min: minimize v over i=0..N-1 on [pi, 3pi/2]
+    y_min = np.inf
+    for i_ymin in range(N):
+        x_at = fminbound(lambda X, ii=i_ymin: _v_of_X(X, ii), np.pi * 5/ 4, np.pi * 7/ 4)
+        y_min = min(y_min, _v_of_X(x_at, i_ymin))
 
     return float(x_min), float(x_max), float(y_min), float(y_max)
