@@ -12,7 +12,7 @@ Exposed API
 - vennfan(...): main plotting function
 """
 
-from typing import Sequence, Optional, Union, Tuple, Dict, Callable, List
+from typing import Sequence, Optional, Union, Tuple, Dict, Callable, List, Iterable
 import os
 
 import numpy as np
@@ -48,7 +48,9 @@ def vennfan(
     values,
     class_names: Sequence[str],
     title: Optional[str] = None,
-    outfile: Optional[str] = None,
+    outfile: Optional[
+        Union[str, os.PathLike, Iterable[Union[str, os.PathLike]]]
+    ] = None,
     # Colors
     colors: Optional[Sequence[Union[str, tuple]]] = None,
     outline_colors: Optional[Sequence[Union[str, tuple]]] = None,
@@ -107,10 +109,12 @@ def vennfan(
     title : str, optional
         Figure title. If None, no title is added.
 
-    outfile : str, optional
+    outfile : str or iterable of str, optional
         If None, the function returns the Matplotlib Figure.
-        If a path is provided, the figure is saved there and the function
+        If a single path is provided, the figure is saved there and the function
         returns None.
+        If an iterable of paths is provided, the figure is saved to all of them
+        and the function returns None.
 
     Colors
     ------
@@ -260,7 +264,7 @@ def vennfan(
     -------
     fig : matplotlib.figure.Figure or None
         If `outfile` is None, returns the Figure. Otherwise, saves the figure
-        to `outfile` and returns None.
+        to `outfile` (or all paths in `outfile` if iterable) and returns None.
     """
     # Validate decay mode
     decay = str(decay).lower()
@@ -1133,7 +1137,11 @@ def vennfan(
         ax.set_title(title)
 
     if outfile:
-        fig.savefig(outfile, dpi=dpi, bbox_inches="tight")
+        if isinstance(outfile, (str, os.PathLike)):
+            fig.savefig(outfile, dpi=dpi, bbox_inches="tight")
+        else:
+            for out in outfile:
+                fig.savefig(out, dpi=dpi, bbox_inches="tight")
         plt.close(fig)
         return None
 
