@@ -14,18 +14,14 @@ Exposed API
 
 from typing import Sequence, Optional, Union, Tuple, Dict, Callable, List, Iterable
 import os
+import yaml
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from scipy.ndimage import distance_transform_edt
 
-from .colors import _rgb
-from .defaults import (
-    default_palette_for_n,
-    default_fontsize,
-    default_linewidth,
-)
+from .colors import _rgb, default_palette_for_n
 from .curves import get_sine_curve, get_cosine_curve, vennfan_find_extrema
 from .utils import (
     disjoint_region_masks,
@@ -41,6 +37,18 @@ from .utils import (
     shrink_text_font_to_region,
     text_color_for_region,
 )
+
+
+# ---- YAML defaults (non-color) ---------------------------------------------
+DEFAULTS_YAML_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "vennfan_defaults.yaml",
+)
+if not os.path.exists(DEFAULTS_YAML_PATH):
+    raise FileNotFoundError(f"Missing defaults YAML: {DEFAULTS_YAML_PATH}")
+
+with open(DEFAULTS_YAML_PATH, "r", encoding="utf-8") as _f:
+    DEFAULTS = yaml.safe_load(_f) or {}
 
 
 def vennfan(
@@ -201,7 +209,7 @@ def vennfan(
         Font size for the complement label.
 
     linewidth : float, optional
-        Line width for the boundary curves. If None, uses `default_linewidth(N)`.
+        Line width for the boundary curves. If None, uses YAML defaults.
 
     region_label_placement :
         {"visual_center", "visual_text_center", "radial", "hybrid"} or None
@@ -357,7 +365,7 @@ def vennfan(
 
     # ---- Linewidth & colors ------------------------------------------------
     if linewidth is None:
-        linewidth = default_linewidth(N)
+        linewidth = float(DEFAULTS["linewidths"][N])
 
     default_fills, default_outlines = default_palette_for_n(N)
 
@@ -380,7 +388,14 @@ def vennfan(
 
     # ---- Font sizes --------------------------------------------------------
     if region_fontsize is None or class_label_fontsize is None:
-        base_fs_region, base_fs_class = default_fontsize(N, linear_decay, curve_mode)
+        region_tbl = DEFAULTS["fontsizes"]["region"][curve_mode]
+        scale_key = "linear" if linear_decay else "exponential"
+        if scale_key not in region_tbl and not linear_decay and "nonlinear" in region_tbl:
+            scale_key = "nonlinear"
+
+        base_fs_region = float(region_tbl[scale_key][N])
+        base_fs_class = float(DEFAULTS["fontsizes"]["class"][N])
+
         if region_fontsize is None:
             region_fontsize = base_fs_region
         if class_label_fontsize is None:
@@ -1005,7 +1020,7 @@ def vennfan(
             va = "center"
 
             this_color = text_color_for_region(key, region_rgbs, text_color)
-            fs_here = fs_radial  # radial labels: fixed size (no shrink)
+            fs_here = fs_radial
 
             ax.text(
                 u_lab,

@@ -4,17 +4,14 @@ from typing import Dict, List, Tuple, Union, Sequence, Optional
 from matplotlib.colors import to_rgb
 import colorsys
 
-
 def _rgb(color: Union[str, tuple]) -> np.ndarray:
     """Convert any Matplotlib color into an RGB float array in [0,1]."""
     return np.array(to_rgb(color), float)
-
 
 def auto_text_color_from_rgb(rgb: np.ndarray) -> str:
     """Choose black or white text based on background luminance."""
     lum = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     return "white" if lum < 0.5 else "black"
-
 
 def color_mix_average(
     colors: Sequence[np.ndarray],
@@ -36,7 +33,6 @@ def color_mix_average(
     arr = np.stack([np.array(c, float) for c in colors], axis=0)
     return arr.mean(axis=0)
 
-
 def color_mix_subtractive(
     colors: Sequence[np.ndarray],
     present: Optional[Sequence[bool]] = None,
@@ -55,7 +51,6 @@ def color_mix_subtractive(
         return np.zeros(3, float)
     arr = np.stack([np.array(c, float) for c in colors], axis=0)
     return np.abs(1.0 - (np.prod(1 - arr, axis=0)) * (len(colors) ** 0.25))
-
 
 def color_mix_hue_average(
     colors: Sequence[np.ndarray],
@@ -119,7 +114,6 @@ def color_mix_hue_average(
     mixed_rgb *= scale_back
     return mixed_rgb
 
-
 def color_mix_alpha_stack(
     colors: Sequence[np.ndarray],
     present: Optional[Sequence[bool]] = None,
@@ -150,3 +144,54 @@ def color_mix_alpha_stack(
         col_arr = np.array(col, float)
         c = c * (1.0 - a) + col_arr * a
     return c
+
+def default_palette(n, start_hex='#006480', s=1.0, v=0.5):
+    """
+    Palettes for n=1..10:
+      - equidistant hues starting from hue(start_hex)
+      - fixed saturation s and value v
+      - reorder for n>4: step 3
+          * n=9: step 4
+          * n=6: alternate steps 3,2,3,2,...
+    Returns: {n: ["#RRGGBB", ...], ...}
+    """
+    def hex2rgb01(h):
+        h = h.lstrip("#")
+        r = int(h[0:2], 16) / 255.0
+        g = int(h[2:4], 16) / 255.0
+        b = int(h[4:6], 16) / 255.0
+        return r, g, b
+
+    def rgb01tohex(r, g, b):
+        return f"#{round(r*255):02X}{round(g*255):02X}{round(b*255):02X}"
+
+    h0 = colorsys.rgb_to_hsv(*hex2rgb01(start_hex))[0]  # in [0,1)
+
+    def order(n):
+        if n <= 4:
+            return list(range(n))
+        steps = [4] if n == 9 else ([3, 2] if n == 6 else [3])
+        out, seen, i, k = [], set(), 0, 0
+        while len(out) < n:
+            out.append(i); seen.add(i)
+            i = (i + steps[k % len(steps)]) % n
+            k += 1
+            # (given the specified steps for these n, we always get a full permutation)
+        return out
+
+    palettes = {}
+    base = [rgb01tohex(*colorsys.hsv_to_rgb((h0 + i/n) % 1.0, s, v)) for i in range(n)]
+    # idx = order(n)
+    # return [base[i] for i in idx]
+    return list(reversed(base))
+
+def default_palette_for_n(N: int) -> Tuple[List[str], List[str]]:
+    """
+    Return (fill_colors, outline_colors) for a given N, using explicit
+    per-N lists. If N not in dict, clamp to nearest defined N.
+    """
+
+    fills = default_palette(N, s=0.5, v=1.0)
+    outlines = default_palette(N, s=1.0, v=0.5)
+
+    return list(fills), list(outlines)

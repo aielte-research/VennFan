@@ -36,8 +36,6 @@ from .colors import (
     color_mix_hue_average,
     color_mix_alpha_stack,
 )
-from .defaults import _default_adaptive_fontsize
-
 
 # ---------------------------------------------------------------------------
 # Region & mask helpers
@@ -442,8 +440,8 @@ def shrink_text_font_to_region(
 
             m00 = mask_eff[iy0_in, ix0_in].astype(float)
             m10 = mask_eff[iy0_in, ix1_in].astype(float)
-            m01 = (mask_eff[i1_in := iy1_in, ix0_in]).astype(float)
-            m11 = (mask_eff[i1_in, ix1_in]).astype(float)
+            m01 = (mask_eff[iy1_in, ix0_in]).astype(float)
+            m11 = (mask_eff[iy1_in, ix1_in]).astype(float)
 
             val = w00 * m00 + w10 * m10 + w01 * m01 + w11 * m11
             inside[in_bounds] = val >= 0.5
@@ -900,6 +898,20 @@ def resolve_color_mixing(
         return cb
 
     raise ValueError(f"Unrecognized color_mixing string: {color_mixing!r}")
+
+def _default_adaptive_fontsize(N: int, linear_scale:bool=True, curve_mode="cosine") -> Tuple[float, float]:
+    fontsizes = {
+        1: (16, 22),
+        2: (14, 20),
+        3: (12, 18),
+        4: (10, 18),
+        5: (8, 16),
+        6: (10, 16),
+        7: (6, 20),
+        8: (4, 8),
+        9: (1, 3),
+    }
+    return fontsizes[N]
 
 def compute_region_fontsizes(
     region_masks: Dict[Tuple[int, ...], np.ndarray],
