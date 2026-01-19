@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vennfan"
-version = "0.0.4"
+version = "0.0.5"
 description = "VennFan"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -33,9 +33,8 @@ classifiers = [
 dependencies = ["numpy", "matplotlib", "pyyaml", "scipy"]
 
 [project.urls]
-Homepage = "https://github.com/aielte-research/vennfan"
 Repository = "https://github.com/aielte-research/vennfan.git"
-arXiv = "https://https://arxiv.org/abs/2601.06980"
+arXiv = "https://arxiv.org/abs/2601.06980"
 
 [tool.setuptools.packages.find]
 where = ["."]

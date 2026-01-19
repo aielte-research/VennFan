@@ -40,15 +40,82 @@ from .utils import (
 
 
 # ---- YAML defaults (non-color) ---------------------------------------------
+
+class VennfanDefaultSettings:
+    """Thin wrapper around vennfan_defaults.yaml to keep access centralized."""
+
+    def __init__(self, yaml_path: str):
+        if not os.path.exists(yaml_path):
+            raise FileNotFoundError(f"Missing defaults YAML: {yaml_path}")
+        with open(yaml_path, "r", encoding="utf-8") as f:
+            self._d = yaml.safe_load(f) or {}
+
+    @staticmethod
+    def _as_float(x, *, path: str) -> float:
+        # Accept only numeric scalars; do not interpret strings like "1/4".
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            raise TypeError(
+                f"Expected a numeric (int/float) at {path}, got {type(x).__name__}."
+            )
+        return float(x)
+
+    def _per_n(self, table, N: int, *, path: str) -> float:
+        if not isinstance(table, dict):
+            raise TypeError(f"Expected a mapping at {path}, got {type(table).__name__}.")
+        if N in table:
+            return self._as_float(table[N], path=f"{path}[{N}]")
+        if str(N) in table:
+            return self._as_float(table[str(N)], path=f"{path}['{N}']")
+        raise KeyError(f"Missing key {N} in {path}.")
+
+    def linewidth(self, N: int) -> float:
+        return self._per_n(self._d["linewidths"], N, path="DEFAULTS.linewidths")
+
+    def class_fontsize(self, N: int) -> float:
+        return self._per_n(self._d["fontsizes"]["class"], N, path="DEFAULTS.fontsizes.class")
+
+    def class_label_offset(self, N: int) -> float:
+        return self._per_n(self._d["class_label_offset"], N, path="DEFAULTS.class_label_offset")
+
+    def region_fontsize(self, curve_mode: str, decay: str, N: int) -> float:
+        region_tbl = self._d["fontsizes"]["region"][curve_mode]
+        if decay in region_tbl:
+            scale_key = decay
+        elif decay == "exponential" and "nonlinear" in region_tbl:
+            scale_key = "nonlinear"
+        else:
+            raise KeyError(f"Missing DEFAULTS.fontsizes.region.{curve_mode}.{decay}")
+        return self._per_n(
+            region_tbl[scale_key],
+            N,
+            path=f"DEFAULTS.fontsizes.region.{curve_mode}.{scale_key}",
+        )
+
+    def setting(self, curve_mode: str, decay: str, name: str, N: int, *, required: bool) -> Optional[float]:
+        settings = (self._d.get("settings") or {})
+        cm = settings.get(curve_mode)
+        if not isinstance(cm, dict):
+            if required:
+                raise KeyError(f"Missing DEFAULTS.settings.{curve_mode}")
+            return None
+        dec = cm.get(decay)
+        if not isinstance(dec, dict):
+            if required:
+                raise KeyError(f"Missing DEFAULTS.settings.{curve_mode}.{decay}")
+            return None
+        tbl = dec.get(name)
+        if tbl is None:
+            if required:
+                raise KeyError(f"Missing DEFAULTS.settings.{curve_mode}.{decay}.{name}")
+            return None
+        return self._per_n(tbl, N, path=f"DEFAULTS.settings.{curve_mode}.{decay}.{name}")
+
 DEFAULTS_YAML_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "vennfan_defaults.yaml",
 )
-if not os.path.exists(DEFAULTS_YAML_PATH):
-    raise FileNotFoundError(f"Missing defaults YAML: {DEFAULTS_YAML_PATH}")
 
-with open(DEFAULTS_YAML_PATH, "r", encoding="utf-8") as _f:
-    DEFAULTS = yaml.safe_load(_f) or {}
+DEFAULTS = VennfanDefaultSettings(DEFAULTS_YAML_PATH)
 
 
 def vennfan(
@@ -67,11 +134,11 @@ def vennfan(
     highlight_colors: Optional[float] = None,
     # Boundary curves / geometry
     curve_mode: str = "cosine",
-    p: float = 0.33,
+    p: Optional[float] = None,
     decay: str = "linear",  # "linear" or "exponential"
     epsilon: Optional[float] = None,
     delta: Optional[float] = None,
-    b: float = 0.8,
+    b: Optional[float] = None,
     y_min: float = -1.0,
     y_max: float = 1.0,
     # Fonts & layout
@@ -79,6 +146,7 @@ def vennfan(
     region_fontsize: Optional[float] = None,
     radial_region_fontsize: Optional[float] = None,
     class_label_fontsize: Optional[float] = None,
+    class_label_offset: Optional[float] = None,
     complement_fontsize: float = 8.0,
     linewidth: Optional[float] = None,
     region_label_placement: Optional[str] = None,
@@ -172,20 +240,24 @@ def vennfan(
     curve_mode : {"cosine", "sine"}
         Base trigonometric curve family used for the classes.
 
-    p : float
+    p : float, optional
         Exponent controlling how amplitude/shape varies with harmonic index.
+        If None, a per-N default is taken from the defaults YAML.
 
     decay : {"linear", "exponential"}
         Amplitude-decay mode for the curves.
 
     epsilon : float or None
         Small vertical offset passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML (if present).
 
     delta : float or None
         Optional decay parameter passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML (if present).
 
-    b : float
+    b : float, optional
         Optional decay base parameter passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML.
 
     y_min, y_max : float
         Vertical extent of the rectangular half-plane before mapping to
@@ -205,11 +277,16 @@ def vennfan(
     class_label_fontsize : float, optional
         Font size for the class names drawn around the outside of the fan.
 
+    class_label_offset : float, optional
+        Radial offset (in units of R) applied to all class labels.
+        If None, uses a per-N default from the defaults YAML.
+
     complement_fontsize : float
         Font size for the complement label.
 
     linewidth : float, optional
-        Line width for the boundary curves. If None, uses YAML defaults.
+        Line width for the boundary curves. If None, uses the per-N default
+        from the defaults YAML.
 
     region_label_placement :
         {"visual_center", "visual_text_center", "radial", "hybrid"} or None
@@ -330,6 +407,25 @@ def vennfan(
     if N > 9:
         raise ValueError("N>9 not supported.")
 
+    # ---- Curve defaults from YAML -----------------------------------------
+    if p is None:
+        p = DEFAULTS.setting(curve_mode, decay, "p", N, required=True)
+    if epsilon is None:
+        epsilon = DEFAULTS.setting(curve_mode, decay, "epsilon", N, required=False)
+    if delta is None:
+        delta = DEFAULTS.setting(curve_mode, decay, "delta", N, required=False)
+    if b is None:
+        b_yaml = DEFAULTS.setting(curve_mode, decay, "b", N, required=False)
+        b = 0.8 if b_yaml is None else b_yaml
+
+    # ---- Class-label offset (separate from region radial offsets) ----------
+    if class_label_offset is None:
+        class_label_offset = DEFAULTS.class_label_offset(N)
+    else:
+        if isinstance(class_label_offset, bool) or not isinstance(class_label_offset, (int, float)):
+            raise TypeError("class_label_offset must be a float or None.")
+        class_label_offset = float(class_label_offset)
+
     zeros = (0,) * N
     ones = (1,) * N  # kept for completeness if needed later
 
@@ -365,7 +461,7 @@ def vennfan(
 
     # ---- Linewidth & colors ------------------------------------------------
     if linewidth is None:
-        linewidth = float(DEFAULTS["linewidths"][N])
+        linewidth = DEFAULTS.linewidth(N)
 
     default_fills, default_outlines = default_palette_for_n(N)
 
@@ -388,14 +484,8 @@ def vennfan(
 
     # ---- Font sizes --------------------------------------------------------
     if region_fontsize is None or class_label_fontsize is None:
-        region_tbl = DEFAULTS["fontsizes"]["region"][curve_mode]
-        scale_key = "linear" if linear_decay else "exponential"
-        if scale_key not in region_tbl and not linear_decay and "nonlinear" in region_tbl:
-            scale_key = "nonlinear"
-
-        base_fs_region = float(region_tbl[scale_key][N])
-        base_fs_class = float(DEFAULTS["fontsizes"]["class"][N])
-
+        base_fs_region = DEFAULTS.region_fontsize(curve_mode, decay, N)
+        base_fs_class = DEFAULTS.class_fontsize(N)
         if region_fontsize is None:
             region_fontsize = base_fs_region
         if class_label_fontsize is None:
@@ -480,12 +570,6 @@ def vennfan(
     else:
         dv = (R_out - (-R_out)) / max(H - 1, 1)
     pixel_area = abs(du * dv)  # currently unused, but conceptually there
-
-    # For class labels we still want a small outward offset by default
-    if region_radial_offset_outside is None:
-        base_offset_outside_cls = 0.05
-    else:
-        base_offset_outside_cls = float(region_radial_offset_outside)
 
     # ---- Region RGBA image -------------------------------------------------
     rgba = np.zeros((H, W, 4), float)
@@ -1092,7 +1176,6 @@ def vennfan(
 
     # ---- Class labels on vennfan -------------------------------------------
     dx_const, dy_const = last_constant_label_offset
-    extra_radial_offset = 0.05
 
     label_angle_degs = class_label_angles(N, curve_mode)
 
@@ -1113,13 +1196,8 @@ def vennfan(
         else:
             r_anchor = R
 
-        r_lab = r_anchor + base_offset_outside_cls * R
-
-        # Slightly different radial offsets for first few labels vs others
-        if i >= 3:
-            r_lab += extra_radial_offset * R
-        else:
-            r_lab += extra_radial_offset * R * 2
+        # Simple class-label radial offset (no additional per-label logic)
+        r_lab = r_anchor + float(class_label_offset) * R
 
         # Optional shift for last (constant) label
         u_lab = r_lab * v_out[0] + (dx_const if i == N - 1 else 0.0)

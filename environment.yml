@@ -6,8 +6,10 @@ dependencies:
   - twine
   - wheel
   - numpy
+  - scipy
   - matplotlib
   - pyyaml
   - pip
   - pip:
     - tqdm
+    - vennfan==0.0.5
