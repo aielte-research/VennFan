@@ -123,24 +123,23 @@ def vennfan(
     values,
     class_names: Sequence[str],
     title: Optional[str] = None,
-    outfile: Optional[
-        Union[str, os.PathLike, Iterable[Union[str, os.PathLike]]]
-    ] = None,
+    outfile: Optional[Union[str, os.PathLike, Iterable[Union[str, os.PathLike]]]] = None,
     # Colors
     colors: Optional[Sequence[Union[str, tuple]]] = None,
     outline_colors: Optional[Sequence[Union[str, tuple]]] = None,
     color_mixing: Union[str, Callable] = "average",
     text_color: Optional[str] = None,
-    highlight_colors: Optional[float] = None,
+    # Highlight
+    highlight_factor: Optional[float] = None,
+    highlight_color: Sequence[float] = np.array([1.0, 1.0, 1.0], float),
+    highlight_gamma: float = 0.5,
     # Boundary curves / geometry
-    curve_mode: str = "cosine",
+    curve_mode: str = "cosine", # "sine" or "cosine"
+    decay: str = "linear", # "linear" or "exponential"
     p: Optional[float] = None,
-    decay: str = "linear",  # "linear" or "exponential"
     epsilon: Optional[float] = None,
     delta: Optional[float] = None,
     b: Optional[float] = None,
-    y_min: float = -1.0,
-    y_max: float = 1.0,
     # Fonts & layout
     dpi: Optional[int] = None,
     region_fontsize: Optional[float] = None,
@@ -218,19 +217,15 @@ def vennfan(
         If None, region label text color is derived from the region fill color
         via `text_color_for_region`.
 
-    highlight_colors : float in [0, 1] or None
-        Optional radial "halo" / highlight effect inside each region using
-        multiple erosions by area fractions 0.9, 0.8, ..., 0.1:
-
-            - None:
+    highlight_factor : float in [0, 1] or None
+        Optional radial "halo" / highlight effect inside each region.
+            - None (default):
                 * no extra highlighting overlay is drawn.
             - 0.0:
-                * draw all erosion levels, but always with the original region
-                  color (no whitening), so visually it changes almost nothing.
+                * draw highlight, but always with the original region color,
+                  so visually it changes almost nothing.
             - 1.0:
-                * deepest erosion (0.1 area) goes all the way to white,
-                  intermediate erosions become progressively lighter mixes
-                  between region color and white.
+                * highlight goes all the way to highlight_color (white by default).
 
         For intermediate values in (0, 1), the maximum whiteness is scaled
         accordingly.
@@ -258,10 +253,6 @@ def vennfan(
     b : float, optional
         Optional decay base parameter passed to the curve function.
         If None, a per-N default is taken from the defaults YAML.
-
-    y_min, y_max : float
-        Vertical extent of the rectangular half-plane before mapping to
-        the disc.
 
     Fonts & layout
     --------------
@@ -379,13 +370,11 @@ def vennfan(
     if disc_points_per_class <= 0:
         raise ValueError("disc_points_per_class must be a positive integer.")
 
-    # Validate highlight_colors
-    if highlight_colors is not None:
-        highlight_factor = float(highlight_colors)
+    # Validate highlight_factor
+    if highlight_factor is not None:
+        highlight_factor = float(highlight_factor)
         if not (0.0 <= highlight_factor <= 1.0):
-            raise ValueError("highlight_colors must be in [0, 1] or None.")
-    else:
-        highlight_factor = None
+            raise ValueError("highlight_factor must be in [0, 1] or None.")
 
     if curve_mode == "sine":
         curve_fn = get_sine_curve
@@ -515,6 +504,9 @@ def vennfan(
     theta = np.mod(np.arctan2(V, U), 2.0 * np.pi)
 
     # Map disc grid back to half-plane coordinates (x_old, y_old)
+    y_min = -1.0
+    y_max = 1.0
+
     x_old = theta.copy()
     y_old = np.full_like(U, y_min - 1.0)
 
@@ -575,11 +567,6 @@ def vennfan(
     rgba = np.zeros((H, W, 4), float)
     region_rgbs: Dict[Tuple[int, ...], np.ndarray] = {}
 
-    # Optional highlight overlay (multi-level erosion-based whitening)
-    highlight_rgba = None
-    if highlight_factor is not None:
-        highlight_rgba = np.zeros_like(rgba)
-
     for key, mask in region_masks.items():
         if not any(key):
             continue  # complement skipped
@@ -599,42 +586,36 @@ def vennfan(
         rgba[mask, 2] = mixed_rgb[2]
         rgba[mask, 3] = 1.0
 
-        # --- Optional multi-level highlight for this region -----------------
-        if highlight_rgba is not None:
+        # --- Optional continuous highlight for this region (BAKED INTO rgba) ---
+        if highlight_factor is not None:
             dist = distance_transform_edt(mask)
-            orig_area = int(mask.sum())
-            if orig_area > 0:
-                dvals = dist[mask].ravel()
-                if dvals.size > 0:
-                    dsorted = np.sort(dvals)  # ascending
-                    # area fractions 0.9, 0.8, ..., 0.1
-                    fracs = np.arange(0.98, 0.0, -0.02)
-                    f_max = fracs[0]
-                    f_min = fracs[-1]
-                    rng = f_max - f_min if f_max > f_min else 1.0
+            dist_vals = dist[mask]
+            if dist_vals.size > 0:
+                dmax = float(dist_vals.max())
+                if dmax > 0.0:
+                    # distance_transform_edt(mask) is 1.0 at the boundary pixels;
+                    # normalize so boundary ≈ 0 and deepest interior ≈ 1
+                    if dmax <= 1.0:
+                        t = np.ones_like(dist_vals, float)
+                    else:
+                        t = (dist_vals - 1.0) / (dmax - 1.0)
+                        t = np.clip(t, 0.0, 1.0)
 
+                    prof = t ** float(highlight_gamma)
+
+                    whiteness = float(highlight_factor) * prof
                     base_rgb = mixed_rgb
-                    white = np.array([1.0, 1.0, 1.0], float)
+                    hc = np.asarray(highlight_color, float)
 
-                    for f in fracs:
-                        # keep fraction f of the most interior pixels
-                        target_pixels = max(1, int(round(orig_area * f)))
-                        idx = max(0, min(orig_area - 1, orig_area - target_pixels))
-                        threshold = float(dsorted[idx])
-                        core_mask = (dist >= threshold) & mask
-                        if not core_mask.any():
-                            continue
+                    new_rgb = (
+                        (1.0 - whiteness)[:, None] * base_rgb[None, :]
+                        + whiteness[:, None] * hc[None, :]
+                    )
 
-                        # whiteness grows as f decreases (more interior)
-                        t = (f_max - f) / rng
-                        whiteness = highlight_factor * t
-
-                        new_rgb = (1.0 - whiteness) * base_rgb + whiteness * white
-
-                        highlight_rgba[core_mask, 0] = new_rgb[0]
-                        highlight_rgba[core_mask, 1] = new_rgb[1]
-                        highlight_rgba[core_mask, 2] = new_rgb[2]
-                        highlight_rgba[core_mask, 3] = 1.0
+                    rgba[mask, 0] = new_rgb[:, 0]
+                    rgba[mask, 1] = new_rgb[:, 1]
+                    rgba[mask, 2] = new_rgb[:, 2]
+                    rgba[mask, 3] = 1.0
 
     # Optional eroded-overlay image for visual_text_center testing
     eroded_rgba = None
@@ -651,16 +632,6 @@ def vennfan(
         interpolation="nearest",
         zorder=1,
     )
-
-    # Overlay highlight colors, if requested
-    if highlight_rgba is not None and np.any(highlight_rgba[..., 3] > 0):
-        ax.imshow(
-            highlight_rgba,
-            origin="lower",
-            extent=[-R_out, R_out, -R_out, R_out],
-            interpolation="nearest",
-            zorder=1.2,
-        )
 
     ax.set_xlim(-R_out, R_out)
     ax.set_ylim(-R_out, R_out)

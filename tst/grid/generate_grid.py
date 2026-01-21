@@ -11,9 +11,29 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 from vennfan import vennfan, make_demo_values
 
 
-def _render_one(N: int, curve_mode: str, p: float, b: float, greek_names: list[str], outdir: str, highlight_colors=None):
+def _render_one(N: int, curve_mode: str, p: float, b: float, greek_names: list[str], outdir: str, highlight_factor=None):
     import numpy as _np
     import matplotlib.pyplot as _plt
+    if curve_mode == "sine":
+        if N > 2 and p == 1 and b > 2/3:
+            return None  # skip invalid combinations
+        if N > 2 and p == 1/2 and b > 3/4:
+            return None  # skip invalid combinations
+        if N > 2 and p == 1/4 and b > 7/8:
+            return None  # skip invalid combinations
+    elif curve_mode == "cosine":
+        if N > 5 and p == 1 and b > 2/3:
+            return None  # skip invalid combinations
+        if N == 5 and p == 1 and b > 3/4:
+            return None  # skip invalid combinations
+        if N == 4 and p == 1 and b > 5/6:
+            return None  # skip invalid combinations
+        if N > 5 and p == 1/2 and b > 4/5:
+            return None  # skip invalid combinations
+        if N == 5 and p == 1/2 and b > 5/6:
+            return None  # skip invalid combinations
+        if N > 7 and p == 1/4 and b > 7/8:
+            return None  # skip invalid combinations
 
     _ = make_demo_values(N)  # kept to preserve original intent; not used below
     values = _np.empty((2,) * N, dtype=object)
@@ -40,7 +60,7 @@ def _render_one(N: int, curve_mode: str, p: float, b: float, greek_names: list[s
         visual_center_rotate_toward_radial=True,
         visual_text_center_area_fraction=0.15,
         text_color="black",
-        highlight_colors=highlight_colors
+        highlight_factor=highlight_factor
     )
 
     _plt.close("all")
@@ -51,7 +71,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--highlight",
         action="store_true",
-        help="Enable highlight colors (passes highlight_colors=0.75).",
+        help="Enable highlight colors (passes highlight_factor=0.75).",
     )
     args = parser.parse_args()
 
@@ -61,10 +81,10 @@ if __name__ == "__main__":
         pass
     if args.highlight:
         outdir = "img/vennfan_grid_highlight"
-        highlight_colors = 0.75
+        highlight_factor = 0.75
     else:
         outdir = "img/vennfan_grid"
-        highlight_colors = None
+        highlight_factor = None
     os.makedirs(outdir, exist_ok=True)
 
     greek_names = [
@@ -86,7 +106,7 @@ if __name__ == "__main__":
                 workers = 8
             with ProcessPoolExecutor(max_workers=workers) as ex:
                 futures = [
-                    ex.submit(_render_one, N, curve_mode, p, b, greek_names, outdir, highlight_colors)
+                    ex.submit(_render_one, N, curve_mode, p, b, greek_names, outdir, highlight_factor)
                     for (p, b) in pairs
                 ]
 
