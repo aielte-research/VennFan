@@ -29,7 +29,6 @@ from .utils import (
     arc_angle_for_region,
     halfplane_to_disc,
     second_radial_intersection,
-    radial_segment_center_for_region,
     normalize_angle_90,
     class_label_angles,
     resolve_color_mixing,
@@ -39,7 +38,7 @@ from .utils import (
 )
 
 
-# ---- YAML defaults (non-color) ---------------------------------------------
+# ---- YAML defaults ---------------------------------------------
 
 class VennfanDefaultSettings:
     """Thin wrapper around vennfan_defaults.yaml to keep access centralized."""
@@ -68,6 +67,22 @@ class VennfanDefaultSettings:
             return self._as_float(table[str(N)], path=f"{path}['{N}']")
         raise KeyError(f"Missing key {N} in {path}.")
 
+    def _as_pair(self, x, *, path: str) -> Tuple[float, float]:
+        if isinstance(x, (list, tuple)) and len(x) == 2:
+            a = self._as_float(x[0], path=f"{path}[0]")
+            b = self._as_float(x[1], path=f"{path}[1]")
+            return (a, b)
+        raise TypeError(f"Expected a 2-sequence of floats at {path}, got {type(x).__name__}.")
+
+    def _per_n_pair(self, table, N: int, *, path: str) -> Tuple[float, float]:
+        if not isinstance(table, dict):
+            raise TypeError(f"Expected a mapping at {path}, got {type(table).__name__}.")
+        if N in table:
+            return self._as_pair(table[N], path=f"{path}[{N}]")
+        if str(N) in table:
+            return self._as_pair(table[str(N)], path=f"{path}['{N}']")
+        raise KeyError(f"Missing key {N} in {path}.")
+
     def linewidth(self, N: int) -> float:
         return self._per_n(self._d["linewidths"], N, path="DEFAULTS.linewidths")
 
@@ -91,6 +106,21 @@ class VennfanDefaultSettings:
             path=f"DEFAULTS.fontsizes.region.{curve_mode}.{scale_key}",
         )
 
+    def region_radial_offset(self, N: int) -> Tuple[float, float]:
+        """
+        Return (inside_offset, outside_offset) for region radial labels.
+
+        Expected YAML shape:
+            region_radial_offset:
+              1: [0.05, 0.05]
+              2: [0.05, 0.05]
+              ...
+        """
+        tbl = self._d.get("region_radial_offset")
+        if tbl is None:
+            raise KeyError("Missing DEFAULTS.region_radial_offset")
+        return self._per_n_pair(tbl, N, path="DEFAULTS.region_radial_offset")
+
     def setting(self, curve_mode: str, decay: str, name: str, N: int, *, required: bool) -> Optional[float]:
         settings = (self._d.get("settings") or {})
         cm = settings.get(curve_mode)
@@ -110,6 +140,7 @@ class VennfanDefaultSettings:
             return None
         return self._per_n(tbl, N, path=f"DEFAULTS.settings.{curve_mode}.{decay}.{name}")
 
+
 DEFAULTS_YAML_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "vennfan_defaults.yaml",
@@ -124,47 +155,39 @@ def vennfan(
     class_names: Sequence[str],
     title: Optional[str] = None,
     outfile: Optional[Union[str, os.PathLike, Iterable[Union[str, os.PathLike]]]] = None,
-    # Colors
-    colors: Optional[Sequence[Union[str, tuple]]] = None,
-    outline_colors: Optional[Sequence[Union[str, tuple]]] = None,
-    color_mixing: Union[str, Callable] = "average",
-    text_color: Optional[str] = None,
-    # Highlight
-    highlight_factor: Optional[float] = None,
-    highlight_color: Sequence[float] = np.array([1.0, 1.0, 1.0], float),
-    highlight_gamma: float = 0.5,
     # Boundary curves / geometry
-    curve_mode: str = "cosine", # "sine" or "cosine"
-    decay: str = "linear", # "linear" or "exponential"
+    curve_mode: str = "cosine",  # "sine" or "cosine"
+    decay: str = "linear",       # "linear" or "exponential"
     p: Optional[float] = None,
     epsilon: Optional[float] = None,
     delta: Optional[float] = None,
     b: Optional[float] = None,
-    # Fonts & layout
-    dpi: Optional[int] = None,
+    # Colors
+    colors: Optional[Sequence[Union[str, tuple]]] = None,
+    outline_colors: Optional[Sequence[Union[str, tuple]]] = None,
+    color_mixing: Union[str, Callable] = "average",  # "average", "subtractive", "hue_average" or "alpha_stack"
+    text_color: Optional[str] = None,
+    # Highlight
+    highlight_factor: Optional[float] = None,
+    highlight_color: Union[str, tuple] = "#FFFFFF",
+    highlight_gamma: float = 0.5,
+    # Fontsizes
     region_fontsize: Optional[float] = None,
-    radial_region_fontsize: Optional[float] = None,
     class_label_fontsize: Optional[float] = None,
-    class_label_offset: Optional[float] = None,
-    complement_fontsize: float = 8.0,
+    complement_fontsize: Optional[float] = None,
+    # Text fitting
+    shrink_region_text: bool = True,
+    # Layout
+    dpi: Optional[int] = None,
     linewidth: Optional[float] = None,
-    region_label_placement: Optional[str] = None,
-    region_radial_offset_inside: Optional[float] = None,
-    region_radial_offset_outside: Optional[float] = None,
+    region_label_placement: str = "visual_text_center",  # "visual_text_center", "visual_center", "radial" or "hybrid"
+    region_radial_offset: Optional[Union[float, Iterable]] = None,
     last_constant_label_offset: Tuple[float, float] = (0.0, 0.0),
-    # Radial behaviour / extras
-    radial_bias: Optional[float] = None,
-    draw_tight_factor: Optional[float] = None,
-    # Visual-center extras
-    visual_center_rotate_toward_radial: bool = False,
-    # Rectangle-based visual-text-center width (kept as parameter)
-    visual_text_center_width: Optional[float] = None,
-    # Area fraction target for erosion in visual_text_center mode
-    visual_text_center_area_fraction: float = 0.5,
+    class_label_offset: Optional[float] = None,
     # Disc grid resolution control
     disc_points_per_class: int = 200,
     # Debugging for visual_text_center (yellow cores, red boxes, cyan line)
-    visual_text_center_debug: bool = False,
+    debug: bool = False,
 ) -> Optional[Figure]:
     """
     Draw a "Venn fan" diagram (circular version of sine/cosine Venn diagrams).
@@ -190,6 +213,30 @@ def vennfan(
         returns None.
         If an iterable of paths is provided, the figure is saved to all of them
         and the function returns None.
+
+    Boundary curves / geometry
+    --------------------------
+    curve_mode : {"cosine", "sine"}
+        Base trigonometric curve family used for the classes.
+
+    decay : {"linear", "exponential"}
+        Amplitude-decay mode for the curves.
+
+    p : float, optional
+        Exponent controlling how amplitude/shape varies with harmonic index.
+        If None, a per-N default is taken from the defaults YAML.
+
+    epsilon : float or None
+        Small vertical offset passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML (if present).
+
+    delta : float or None
+        Optional decay parameter passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML (if present).
+
+    b : float, optional
+        Optional decay base parameter passed to the curve function.
+        If None, a per-N default is taken from the defaults YAML.
 
     Colors
     ------
@@ -217,124 +264,100 @@ def vennfan(
         If None, region label text color is derived from the region fill color
         via `text_color_for_region`.
 
+    Highlight
+    ---------
     highlight_factor : float in [0, 1] or None
         Optional radial "halo" / highlight effect inside each region.
-            - None (default):
-                * no extra highlighting overlay is drawn.
-            - 0.0:
-                * draw highlight, but always with the original region color,
-                  so visually it changes almost nothing.
-            - 1.0:
-                * highlight goes all the way to highlight_color (white by default).
+            - None (default): no extra highlight overlay is drawn.
+            - 0.0: highlight is computed but has no visual impact.
+            - 1.0: highlight goes all the way to `highlight_color`.
 
-        For intermediate values in (0, 1), the maximum whiteness is scaled
-        accordingly.
+    highlight_color : color
+        Matplotlib color spec, e.g. "white" (default) or an RGB tuple, used as the highlight target.
+        This is only interpreted when `highlight_factor` is not None.
 
-    Boundary curves / geometry
-    --------------------------
-    curve_mode : {"cosine", "sine"}
-        Base trigonometric curve family used for the classes.
+    highlight_gamma : float
+        Gamma applied to the normalized interior distance profile before scaling by `highlight_factor`.
+        Default is 0.5 (square root).
 
-    p : float, optional
-        Exponent controlling how amplitude/shape varies with harmonic index.
-        If None, a per-N default is taken from the defaults YAML.
-
-    decay : {"linear", "exponential"}
-        Amplitude-decay mode for the curves.
-
-    epsilon : float or None
-        Small vertical offset passed to the curve function.
-        If None, a per-N default is taken from the defaults YAML (if present).
-
-    delta : float or None
-        Optional decay parameter passed to the curve function.
-        If None, a per-N default is taken from the defaults YAML (if present).
-
-    b : float, optional
-        Optional decay base parameter passed to the curve function.
-        If None, a per-N default is taken from the defaults YAML.
-
-    Fonts & layout
-    --------------
-    dpi : int, optional
-        Figure DPI. If None, defaults to `100 * N`.
-
+    Fontsizes
+    ---------
     region_fontsize : float, optional
-        Base font size for region labels placed using visual centers.
-
-    radial_region_fontsize : float, optional
-        Font size for region labels placed in radial / hybrid modes.
+        Base font size used for all region labels (regardless of placement mode).
+        If None, uses a per-N default from the defaults YAML.
 
     class_label_fontsize : float, optional
         Font size for the class names drawn around the outside of the fan.
-
-    class_label_offset : float, optional
-        Radial offset (in units of R) applied to all class labels.
         If None, uses a per-N default from the defaults YAML.
 
-    complement_fontsize : float
-        Font size for the complement label.
+    complement_fontsize : float, optional
+        Base font size for the complement label (all-zeros region). If None, defaults to
+        `region_fontsize` (after `region_fontsize` has been resolved, including YAML defaults).
+
+    Text fitting
+    ------------
+    shrink_region_text : bool
+        If True (default), region labels are shrink-to-fit against their region masks using
+        `shrink_text_font_to_region(...)`. This applies in all placement modes ("visual_center",
+        "visual_text_center", "radial", and "hybrid") and is also used for the complement label.
+        If False, the base font sizes are used without any shrink-to-fit.
+
+    Layout
+    ------
+    dpi : int, optional
+        Figure DPI. If None, defaults to `100 * N`.
 
     linewidth : float, optional
-        Line width for the boundary curves. If None, uses the per-N default
-        from the defaults YAML.
+        Line width for the boundary curves. If None, uses the per-N default from
+        the defaults YAML. This also controls the erosion radius used by
+        `shrink_text_font_to_region` (via `erosion_radius_pix = linewidth`).
 
-    region_label_placement :
-        {"visual_center", "visual_text_center", "radial", "hybrid"} or None
+    region_label_placement : {"visual_text_center", "visual_center", "radial", "hybrid"}
+        Controls how region labels are positioned.
 
-        - None:
-            * "visual_center" if `decay == "linear"`,
-            * "radial" otherwise.
+        Default is "visual_text_center".
+
         - "visual_center":
-            classic visual-center placement.
+            Classic visual-center placement.
         - "visual_text_center":
-            rectangle-based visual text center:
-              * erode region until its area is
-                ~visual_text_center_area_fraction * original_area
-              * inside that eroded core, find the longest line
-              * anchor label at its midpoint with that line's orientation
-              * (optionally) draw:
-                    - eroded cores in whitish-yellow
-                    - the longest line in cyan
-              * IMPORTANT: shrink_to_fit is always tested against the
-                FULL region, not the eroded core.
+            Area-based erosion + longest-line anchor (with optional debug overlay).
         - "radial":
-            always use radial placement along a ray.
+            Always use radial placement along a ray.
         - "hybrid":
-            per-region decision via `region_label_mode_for_key(...)` between
+            Per-region decision via `region_label_mode_for_key(...)` between
             "visual_center" and "radial".
 
-    visual_center_rotate_toward_radial : bool
-        If True and placement is "visual_center", multi-character labels get
-        rotated toward that region's radial anchor on the main circle.
+    region_radial_offset : float or (float, float) or [float, float] or None
+        Radial offsets used by the radial placement branch, interpreted as (inside, outside).
 
-    visual_text_center_width : float, optional
-        Fixed rectangle width (data units). Currently used only as a gate
-        (if <= 0, we skip the rectangle-based search and fall back to
-        plain visual-center).
+        - If None, a per-N default pair is loaded from the defaults YAML key `region_radial_offset`.
+        - If a float, the same value is used for both inside and outside.
+        - If a length-2 tuple/list, it is interpreted as (inside, outside).
 
-    visual_text_center_area_fraction : float
-        Target area fraction for the eroded region in visual_text_center mode.
-        Must be in (0, 1]. Default is 0.5.
+        Offsets are always interpreted as **fractions of R** using the rule near the main circle:
+            - inside regions:  r = R * (1 - inside_offset)
+            - outside regions: r = R * (1 + outside_offset)
 
+    last_constant_label_offset : (float, float)
+        Additional (dx, dy) shift applied only to the last class label (i == N-1).
+
+    class_label_offset : float, optional
+        Radial offset (in units of R) applied to all class labels. If None, uses a per-N
+        default from the defaults YAML.
+
+    Resolution control
+    ------------------
     disc_points_per_class : int
-        Controls the resolution of the disc grid used for region masks.
-        Actual grid resolution along each axis is:
+        Controls the resolution of the disc grid used for region masks. The grid has
+        approximately (N * disc_points_per_class) samples along each axis (with a safety
+        lower bound of 50 per class). Higher values refine region boundaries and can reduce
+        over-aggressive shrink-to-fit in small regions, at the cost of runtime and memory.
 
-            grid_size = N * disc_points_per_class
-
-        Increasing this (e.g. 200, 250, 300) refines the mask and can reduce
-        over-aggressive shrinking in small regions at the cost of runtime
-        and memory.
-
-    visual_text_center_debug : bool
-        If True, enables visual debugging for visual_text_center:
-            - eroded-region cores overdrawn in whitish-yellow
-            - oriented text bounding boxes (from shrink_text_font_to_region)
-              drawn in red
-            - longest line segment used for anchoring drawn in cyan.
-
-        If False, all these debug elements are suppressed.
+    Debugging
+    ---------
+    debug : bool
+        Enables visual debugging overlays.
+        If False (default), all these debug elements are suppressed.
 
     Returns
     -------
@@ -342,22 +365,18 @@ def vennfan(
         If `outfile` is None, returns the Figure. Otherwise, saves the figure
         to `outfile` (or all paths in `outfile` if iterable) and returns None.
     """
+    visual_text_center_area_fraction = 0.10
+
     # Validate decay mode
     decay = str(decay).lower()
     if decay not in ("linear", "exponential"):
         raise ValueError("decay must be 'linear' or 'exponential'.")
 
-    # Linear vs decaying amplitude regime
-    linear_decay = decay == "linear"
-
     if curve_mode not in ("cosine", "sine"):
         raise ValueError(f"Unsupported curve_mode {curve_mode!r}; use 'cosine' or 'sine'.")
 
-    # Validate / normalize radial_bias
-    if radial_bias is not None:
-        if not (0.0 <= float(radial_bias) <= 1.0):
-            raise ValueError("radial_bias must be in the range [0, 1] or None.")
-        radial_bias = float(radial_bias)
+    if not isinstance(shrink_region_text, bool):
+        raise TypeError("shrink_region_text must be a bool.")
 
     # Validate visual_text_center_area_fraction
     frac = float(visual_text_center_area_fraction)
@@ -376,10 +395,19 @@ def vennfan(
         if not (0.0 <= highlight_factor <= 1.0):
             raise ValueError("highlight_factor must be in [0, 1] or None.")
 
-    if curve_mode == "sine":
-        curve_fn = get_sine_curve
-    else:
-        curve_fn = get_cosine_curve
+    # Normalize highlight_color (only if highlight is enabled)
+    highlight_rgb: Optional[np.ndarray] = None
+    if highlight_factor is not None:
+        try:
+            highlight_rgb = np.asarray(_rgb(highlight_color), float)
+        except Exception as e:
+            raise TypeError(
+                "highlight_color must be a valid Matplotlib color spec (e.g., 'white' or an RGB tuple)."
+            ) from e
+        if highlight_rgb.shape != (3,):
+            raise ValueError("highlight_color must resolve to an RGB triple of shape (3,).")
+
+    curve_fn = get_sine_curve if curve_mode == "sine" else get_cosine_curve
 
     # ---- Input checks ------------------------------------------------------
     arr = np.asarray(values, dtype=object)
@@ -407,6 +435,17 @@ def vennfan(
         b_yaml = DEFAULTS.setting(curve_mode, decay, "b", N, required=False)
         b = 0.8 if b_yaml is None else b_yaml
 
+    # ---- Analytic extents (used for complement anchor) ---------------------
+    xmn_ext, xmx_ext, ymn_ext, ymx_ext = vennfan_find_extrema(
+        curve_mode=curve_mode,
+        p=p,
+        decay=decay,
+        N=N,
+        epsilon=epsilon,
+        delta=delta,
+        b=b,
+    )
+
     # ---- Class-label offset (separate from region radial offsets) ----------
     if class_label_offset is None:
         class_label_offset = DEFAULTS.class_label_offset(N)
@@ -416,37 +455,38 @@ def vennfan(
         class_label_offset = float(class_label_offset)
 
     zeros = (0,) * N
-    ones = (1,) * N  # kept for completeness if needed later
 
     # ---- Region label placement mode ---------------------------------------
-    if region_label_placement is None:
-        region_label_placement = "visual_center" if linear_decay else "radial"
-    else:
-        region_label_placement = str(region_label_placement).lower()
-    if region_label_placement not in (
-        "radial",
-        "visual_center",
-        "visual_text_center",
-        "hybrid",
-    ):
+    region_label_placement = str(region_label_placement).lower()
+    if region_label_placement not in ("radial", "visual_center", "visual_text_center", "hybrid"):
         raise ValueError(
             "region_label_placement must be one of "
             "'radial', 'visual_center', 'visual_text_center', or 'hybrid'."
         )
 
-    # Default rectangle width for visual_text_center (kept for API)
-    if visual_text_center_width is None:
-        visual_text_center_width = float(np.sin(4.0 * np.pi / (2.0 ** N)))
+    # Internal gate for visual_text_center algorithm
+    visual_text_center_width = float(np.sin(4.0 * np.pi / (2.0 ** N)))
 
-    # Offsets: only float or None
-    if region_radial_offset_inside is not None and not isinstance(
-        region_radial_offset_inside, (int, float)
-    ):
-        raise TypeError("region_radial_offset_inside must be a float or None.")
-    if region_radial_offset_outside is not None and not isinstance(
-        region_radial_offset_outside, (int, float)
-    ):
-        raise TypeError("region_radial_offset_outside must be a float or None.")
+    # ---- Resolve region_radial_offset into (inside, outside) ----------------
+    if region_radial_offset is None:
+        off_in, off_out = DEFAULTS.region_radial_offset(N)
+    else:
+        if isinstance(region_radial_offset, bool):
+            raise TypeError("region_radial_offset must be a float, a length-2 tuple/list of floats, or None.")
+        if isinstance(region_radial_offset, (int, float)):
+            f = float(region_radial_offset)
+            off_in, off_out = f, f
+        elif isinstance(region_radial_offset, (list, tuple)) and len(region_radial_offset) == 2:
+            a, b2 = region_radial_offset[0], region_radial_offset[1]
+            if isinstance(a, bool) or not isinstance(a, (int, float)):
+                raise TypeError("region_radial_offset[0] must be a float.")
+            if isinstance(b2, bool) or not isinstance(b2, (int, float)):
+                raise TypeError("region_radial_offset[1] must be a float.")
+            off_in, off_out = float(a), float(b2)
+        else:
+            raise TypeError(
+                "region_radial_offset must be a float, a length-2 tuple/list of floats, or None."
+            )
 
     # ---- Linewidth & colors ------------------------------------------------
     if linewidth is None:
@@ -472,30 +512,28 @@ def vennfan(
     label_rgbs = [_rgb(c) for c in line_colors]
 
     # ---- Font sizes --------------------------------------------------------
-    if region_fontsize is None or class_label_fontsize is None:
-        base_fs_region = DEFAULTS.region_fontsize(curve_mode, decay, N)
-        base_fs_class = DEFAULTS.class_fontsize(N)
-        if region_fontsize is None:
-            region_fontsize = base_fs_region
-        if class_label_fontsize is None:
-            class_label_fontsize = base_fs_class
+    base_fs_region = DEFAULTS.region_fontsize(curve_mode, decay, N)
+    base_fs_class = DEFAULTS.class_fontsize(N)
 
-    # Radial region labels: explicit size or fall back to region_fontsize
-    if radial_region_fontsize is None:
-        radial_region_fontsize = region_fontsize
-    fs_radial = float(radial_region_fontsize)
+    if region_fontsize is None:
+        region_fontsize = base_fs_region
+    if class_label_fontsize is None:
+        class_label_fontsize = base_fs_class
+    if complement_fontsize is None:
+        complement_fontsize = region_fontsize
+
     fs_region = float(region_fontsize)
+    fs_comp = float(complement_fontsize)
 
     # ---- Color mixing callback ---------------------------------------------
     mixing_cb = resolve_color_mixing(color_mixing, N)
 
     # ---- Base domain & disc grid -------------------------------------------
     x_min, x_max = 0.0, 2.0 * np.pi
-
     R = 1.0
     R_out = 2.0 * R
 
-    grid_n = max(50, disc_points_per_class)  # safety lower bound
+    grid_n = max(50, disc_points_per_class)
     us = np.linspace(-R_out, R_out, N * grid_n)
     vs = np.linspace(-R_out, R_out, N * grid_n)
     U, V = np.meshgrid(us, vs)
@@ -533,7 +571,6 @@ def vennfan(
 
     # ---- Membership masks on the disc grid --------------------------------
     membership: List[np.ndarray] = []
-
     for i in range(N):
         curve = curve_fn(
             x_old,
@@ -545,23 +582,11 @@ def vennfan(
             delta=delta,
             b=b,
         )
-        mask = y_old >= curve
-        membership.append(mask)
+        membership.append(y_old >= curve)
 
     # ---- Disjoint region masks ---------------------------------------------
     region_masks = disjoint_region_masks(membership)
     H, W = U.shape
-
-    # ---- Region areas (only for completeness) ------------------------------
-    if us.size > 1:
-        du = us[1] - us[0]
-    else:
-        du = (R_out - (-R_out)) / max(W - 1, 1)
-    if vs.size > 1:
-        dv = vs[1] - vs[0]
-    else:
-        dv = (R_out - (-R_out)) / max(H - 1, 1)
-    pixel_area = abs(du * dv)  # currently unused, but conceptually there
 
     # ---- Region RGBA image -------------------------------------------------
     rgba = np.zeros((H, W, 4), float)
@@ -569,7 +594,7 @@ def vennfan(
 
     for key, mask in region_masks.items():
         if not any(key):
-            continue  # complement skipped
+            continue
         if not mask.any():
             continue
 
@@ -586,15 +611,12 @@ def vennfan(
         rgba[mask, 2] = mixed_rgb[2]
         rgba[mask, 3] = 1.0
 
-        # --- Optional continuous highlight for this region (BAKED INTO rgba) ---
         if highlight_factor is not None:
             dist = distance_transform_edt(mask)
             dist_vals = dist[mask]
             if dist_vals.size > 0:
                 dmax = float(dist_vals.max())
                 if dmax > 0.0:
-                    # distance_transform_edt(mask) is 1.0 at the boundary pixels;
-                    # normalize so boundary ≈ 0 and deepest interior ≈ 1
                     if dmax <= 1.0:
                         t = np.ones_like(dist_vals, float)
                     else:
@@ -602,16 +624,13 @@ def vennfan(
                         t = np.clip(t, 0.0, 1.0)
 
                     prof = t ** float(highlight_gamma)
-
                     whiteness = float(highlight_factor) * prof
-                    base_rgb = mixed_rgb
-                    hc = np.asarray(highlight_color, float)
+                    hc = highlight_rgb  # type: ignore[assignment]
 
                     new_rgb = (
-                        (1.0 - whiteness)[:, None] * base_rgb[None, :]
+                        (1.0 - whiteness)[:, None] * mixed_rgb[None, :]
                         + whiteness[:, None] * hc[None, :]
                     )
-
                     rgba[mask, 0] = new_rgb[:, 0]
                     rgba[mask, 1] = new_rgb[:, 1]
                     rgba[mask, 2] = new_rgb[:, 2]
@@ -619,7 +638,7 @@ def vennfan(
 
     # Optional eroded-overlay image for visual_text_center testing
     eroded_rgba = None
-    if region_label_placement == "visual_text_center" and visual_text_center_debug:
+    if region_label_placement == "visual_text_center" and debug:
         eroded_rgba = np.zeros_like(rgba)
 
     # ---- Figure and axes ---------------------------------------------------
@@ -642,24 +661,8 @@ def vennfan(
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # ---- Optional: tighten drawing range using analytic extrema ------------
-    if draw_tight_factor is not None:
-        xmn, xmx, ymn, ymx = vennfan_find_extrema(
-            curve_mode=curve_mode,
-            p=p,
-            decay=decay,
-            N=N,
-            epsilon=epsilon,
-            delta=delta,
-            b=b,
-        )
-        f = float(draw_tight_factor)
-        ax.set_xlim(xmn * f, xmx * f)
-        ax.set_ylim(ymn * f, ymx * f)
-
     # ---- Class boundaries in vennfan plane ---------------------------------
     x_plot = np.linspace(x_min, x_max, 1000 * N)
-    curves: List[np.ndarray] = []
     disc_u: List[np.ndarray] = []
     disc_v: List[np.ndarray] = []
 
@@ -674,13 +677,10 @@ def vennfan(
             delta=delta,
             b=b,
         )
-        curves.append(y_plot)
-
         u_curve, v_curve = halfplane_to_disc(x_plot, y_plot, R, y_min, y_max)
         disc_u.append(u_curve)
         disc_v.append(v_curve)
 
-    # Draw each class outline twice: alpha 1.0 then 0.5
     for pass_alpha in (1.0, 0.5):
         for i in range(N):
             u_curve = disc_u[i]
@@ -693,7 +693,6 @@ def vennfan(
                 alpha=pass_alpha,
                 zorder=4,
             )
-            # Close curve if endpoints don't coincide
             if u_curve.size > 1:
                 du_c = u_curve[0] - u_curve[-1]
                 dv_c = v_curve[0] - v_curve[-1]
@@ -708,26 +707,20 @@ def vennfan(
                     )
 
     # ---- Precompute for region label placement -----------------------------
-    rho = np.sqrt(U * U + V * V)
     circle_band = np.abs(rho - R) <= (0.03 * R)
 
-    # Ensure renderer exists for text extent calculations
     fig.canvas.draw()
-
     erosion_radius_pix = linewidth * 1.0
 
     # ---- Region labels (visual_center / visual_text_center / radial) -------
     for key, mask in region_masks.items():
-        if not mask.any():
+        if (not mask.any()) or (key == zeros):
             continue
-        if key == zeros:
-            continue  # complement handled separately
 
         value = arr[key]
         if value is None:
             continue
 
-        # Decide per-region mode
         if region_label_placement == "visual_text_center":
             placement_mode = "visual_text_center"
         else:
@@ -744,74 +737,43 @@ def vennfan(
                 continue
 
             this_color = text_color_for_region(key, region_rgbs, text_color)
-            fs_here = fs_region
             u_lab, v_lab = pos
-
-            # Default: horizontal
             rot = 0.0
-
-            # Optional: rotate toward radial anchor on the main circle
-            if visual_center_rotate_toward_radial and len(str(value)) > 1:
-                angle_raw = arc_angle_for_region(mask, circle_band, theta, U, V)
-                if angle_raw is not None:
-                    u_anchor = R * np.cos(angle_raw)
-                    v_anchor = R * np.sin(angle_raw)
-                    du_vec = u_anchor - u_lab
-                    dv_vec = v_anchor - v_lab
-                    if not (du_vec == 0.0 and dv_vec == 0.0):
-                        deg_raw = np.degrees(np.arctan2(dv_vec, du_vec))
-                        rot = normalize_angle_90(deg_raw)
 
             ha = "center"
             va = "center"
 
-            # Shrink against the ORIGINAL region `mask`
-            fs_adj = shrink_text_font_to_region(
-                fig,
-                ax,
-                f"{value}",
-                u_lab,
-                v_lab,
-                fs_here,
-                mask,
-                U,
-                V,
-                rotation=rot,
-                ha=ha,
-                va=va,
-                erosion_radius_pix=erosion_radius_pix,
-                debug_mode=visual_text_center_debug,
-            )
+            if shrink_region_text:
+                fs_use = shrink_text_font_to_region(
+                    fig, ax, f"{value}", u_lab, v_lab, fs_region,
+                    mask, U, V,
+                    rotation=rot, ha=ha, va=va,
+                    erosion_radius_pix=erosion_radius_pix,
+                    debug_mode=debug,
+                )
+            else:
+                fs_use = fs_region
 
             ax.text(
-                u_lab,
-                v_lab,
-                f"{value}",
-                ha=ha,
-                va=va,
-                fontsize=fs_adj,
-                color=this_color,
-                zorder=5,
-                rotation=rot,
-                rotation_mode="anchor",
+                u_lab, v_lab, f"{value}",
+                ha=ha, va=va, fontsize=fs_use,
+                color=this_color, zorder=5,
+                rotation=rot, rotation_mode="anchor",
             )
 
         elif placement_mode == "visual_text_center":
             # --- Area-based erosion + longest-line anchor, with debug overlay ---
             this_color = text_color_for_region(key, region_rgbs, text_color)
-            fs_here = fs_region
 
-            # Default fallback: plain visual center
             pos = visual_center(mask, U, V)
             if pos is None:
                 continue
             u_opt, v_opt = pos
             rot_opt = 0.0
-            debug_line_segment = None  # ((x_minus, y_minus), (x_plus, y_plus)) if available
+            debug_line_segment = None
 
             width = float(visual_text_center_width)
             if width > 0.0:
-                # Distance transform inside the region
                 dist = distance_transform_edt(mask)
                 orig_area = int(mask.sum())
                 if orig_area > 0:
@@ -819,8 +781,7 @@ def vennfan(
                     target_pixels = max(1, int(round(orig_area * visual_text_center_area_fraction)))
                     dvals = dist[mask].ravel()
                     if dvals.size > 0:
-                        dsorted = np.sort(dvals)  # ascending
-                        # keep the pixels with the largest distances
+                        dsorted = np.sort(dvals)
                         idx = max(0, min(orig_area - 1, orig_area - target_pixels))
                         threshold = float(dsorted[idx])
                         core_mask = (dist >= threshold) & mask
@@ -838,10 +799,7 @@ def vennfan(
                             dist_core[~core_mask] = -1.0
                             max_core = dist_core.max()
                             if max_core > 0.0:
-                                iy0, ix0 = np.unravel_index(
-                                    np.argmax(dist_core),
-                                    dist_core.shape,
-                                )
+                                iy0, ix0 = np.unravel_index(np.argmax(dist_core), dist_core.shape)
                                 x_anchor = float(U[iy0, ix0])
                                 y_anchor = float(V[iy0, ix0])
 
@@ -862,9 +820,7 @@ def vennfan(
                                     dyg = 1.0
                                     y0_grid = float(ys_grid[0]) if ys_grid.size else 0.0
 
-                                step_x = abs(dxg)
-                                step_y = abs(dyg)
-                                step = float(min(step_x, step_y))
+                                step = float(min(abs(dxg), abs(dyg)))
                                 if step <= 0.0:
                                     step = 1.0
 
@@ -873,8 +829,7 @@ def vennfan(
                                 max_span = float(np.hypot(span_x, span_y))
                                 max_steps = max(1, int(max_span / step) + 3)
 
-                                n_angles = 72
-                                angles = np.linspace(0.0, np.pi, int(n_angles), endpoint=False)
+                                angles = np.linspace(0.0, np.pi, 72, endpoint=False)
 
                                 best_length = -1.0
                                 best_center_x = x_anchor
@@ -936,8 +891,7 @@ def vennfan(
                                 if best_length > 0.0:
                                     u_opt = best_center_x
                                     v_opt = best_center_y
-                                    angle_deg = float(np.degrees(best_angle))
-                                    rot_opt = normalize_angle_90(angle_deg)
+                                    rot_opt = normalize_angle_90(float(np.degrees(best_angle)))
                                     debug_line_segment = (
                                         (best_minus_x, best_minus_y),
                                         (best_plus_x, best_plus_y),
@@ -946,50 +900,34 @@ def vennfan(
             ha = "center"
             va = "center"
 
-            # Shrink against ORIGINAL `mask`, not the eroded core.
-            fs_adj = shrink_text_font_to_region(
-                fig,
-                ax,
-                f"{value}",
-                u_opt,
-                v_opt,
-                fs_here,
-                mask,  # full region
-                U,
-                V,
-                rotation=rot_opt,
-                ha=ha,
-                va=va,
-                erosion_radius_pix=erosion_radius_pix,
-                debug_mode=visual_text_center_debug,
-            )
+            # FIX: shrink + draw must use the SAME rotation
+            rot_draw = rot_opt if len(str(value)) > 1 else 0.0
+
+            if shrink_region_text:
+                fs_use = shrink_text_font_to_region(
+                    fig, ax, f"{value}", u_opt, v_opt, fs_region,
+                    mask, U, V,
+                    rotation=rot_draw, ha=ha, va=va,
+                    erosion_radius_pix=erosion_radius_pix,
+                    debug_mode=debug,
+                )
+            else:
+                fs_use = fs_region
 
             ax.text(
-                u_opt,
-                v_opt,
-                f"{value}",
-                ha=ha,
-                va=va,
-                fontsize=fs_adj,
-                color=this_color,
-                zorder=5,
-                rotation=rot_opt if len(value) > 1 else 0,
+                u_opt, v_opt, f"{value}",
+                ha=ha, va=va, fontsize=fs_use,
+                color=this_color, zorder=5,
+                rotation=rot_draw,
                 rotation_mode="anchor",
             )
 
-            # Debug: draw the longest line in cyan
-            if visual_text_center_debug and debug_line_segment is not None:
+            if debug and debug_line_segment is not None:
                 (xm, ym), (xp, yp) = debug_line_segment
-                ax.plot(
-                    [xm, xp],
-                    [ym, yp],
-                    color="cyan",
-                    linewidth=0.8,
-                    zorder=4.5,
-                )
+                ax.plot([xm, xp], [ym, yp], color="cyan", linewidth=0.8, zorder=4.5)
 
         else:
-            # --- Radial placement branch ------------------------------------
+            # --- Radial placement branch ---
             last_bit = key[-1]
 
             angle_raw = arc_angle_for_region(mask, circle_band, theta, U, V)
@@ -997,50 +935,7 @@ def vennfan(
                 continue
 
             v_out = np.array([np.cos(angle_raw), np.sin(angle_raw)], float)
-
-            if radial_bias is None:
-                # Fixed-offset behaviour near the main circle (legacy style)
-                off_in = (
-                    float(region_radial_offset_inside)
-                    if region_radial_offset_inside is not None
-                    else 0.05
-                )
-                off_out = (
-                    float(region_radial_offset_outside)
-                    if region_radial_offset_outside is not None
-                    else 0.05
-                )
-                r_lab = R * (1.0 - off_in) if last_bit == 1 else R * (1.0 + off_out)
-            else:
-                # Radial centering using radial_bias
-                r_mid = radial_segment_center_for_region(
-                    mask=mask,
-                    angle_rad=angle_raw,
-                    u_min=us[0],
-                    v_min=vs[0],
-                    du_val=du,
-                    dv_val=dv,
-                    H_val=H,
-                    W_val=W,
-                    R_max=R_out,
-                    radial_bias=radial_bias,
-                    n_samples=1024,
-                )
-
-                if r_mid is None:
-                    pos_vc = visual_center(mask, U, V)
-                    if pos_vc is not None:
-                        r_mid = float(np.hypot(pos_vc[0], pos_vc[1]))
-                    else:
-                        r_mid = R
-
-                offset = 0.0
-                if last_bit == 1 and region_radial_offset_inside is not None:
-                    offset = -float(region_radial_offset_inside)
-                elif last_bit == 0 and region_radial_offset_outside is not None:
-                    offset = float(region_radial_offset_outside)
-
-                r_lab = r_mid + offset
+            r_lab = R * (1.0 - float(off_in)) if last_bit == 1 else R * (1.0 + float(off_out))
 
             u_lab = r_lab * v_out[0]
             v_lab = r_lab * v_out[1]
@@ -1050,44 +945,30 @@ def vennfan(
             rot_rad = np.deg2rad(rot)
             v_base = np.array([np.cos(rot_rad), np.sin(rot_rad)], float)
 
-            if last_bit == 1:
-                v_circle = v_out
-            else:
-                v_circle = -v_out
-
+            v_circle = v_out if last_bit == 1 else -v_out
             d_align = float(np.dot(v_circle, v_base))
 
-            # Alignment:
-            # - In hybrid + biased mode with no extra offsets, center-align text.
-            # - Otherwise, keep original right/left rule.
-            if (
-                region_label_placement == "hybrid"
-                and radial_bias is not None
-                and (
-                    (last_bit == 1 and region_radial_offset_inside is None)
-                    or (last_bit == 0 and region_radial_offset_outside is None)
-                )
-            ):
-                ha = "center"
-            else:
-                ha = "right" if d_align >= 0 else "left"
-
+            ha = "right" if d_align >= 0 else "left"
             va = "center"
 
             this_color = text_color_for_region(key, region_rgbs, text_color)
-            fs_here = fs_radial
+
+            if shrink_region_text:
+                fs_use = shrink_text_font_to_region(
+                    fig, ax, f"{value}", u_lab, v_lab, fs_region,
+                    mask, U, V,
+                    rotation=rot, ha=ha, va=va,
+                    erosion_radius_pix=erosion_radius_pix,
+                    debug_mode=debug,
+                )
+            else:
+                fs_use = fs_region
 
             ax.text(
-                u_lab,
-                v_lab,
-                f"{value}",
-                ha=ha,
-                va=va,
-                fontsize=fs_here,
-                color=this_color,
-                zorder=5,
-                rotation=rot,
-                rotation_mode="anchor",
+                u_lab, v_lab, f"{value}",
+                ha=ha, va=va, fontsize=fs_use,
+                color=this_color, zorder=5,
+                rotation=rot, rotation_mode="anchor",
             )
 
     # ---- Complement (all zeros) --------------------------------------------
@@ -1096,58 +977,43 @@ def vennfan(
         val_comp = arr[zeros]
         if val_comp is not None:
             this_color = text_color if text_color is not None else "black"
-            fs_comp = float(complement_fontsize)
 
-            u_lab = R_out - 0.1
-            v_lab = -R_out + 0.1
+            u_lab = float(xmx_ext)
+            v_lab = float(ymn_ext)
             rot = 0.0
             ha = "right"
             va = "bottom"
 
-            # Complement label: protect with shrink-to-fit (original comp_mask)
-            fs_adj = shrink_text_font_to_region(
-                fig,
-                ax,
-                f"{val_comp}",
-                u_lab,
-                v_lab,
-                fs_comp,
-                comp_mask,
-                U,
-                V,
-                rotation=rot,
-                ha=ha,
-                va=va,
-                erosion_radius_pix=erosion_radius_pix,
-                debug_mode=visual_text_center_debug,
-            )
+            if shrink_region_text:
+                fs_use = shrink_text_font_to_region(
+                    fig, ax, f"{val_comp}", u_lab, v_lab, fs_comp,
+                    comp_mask, U, V,
+                    rotation=rot, ha=ha, va=va,
+                    erosion_radius_pix=erosion_radius_pix,
+                    debug_mode=debug,
+                )
+            else:
+                fs_use = fs_comp
 
             ax.text(
-                u_lab,
-                v_lab,
-                f"{val_comp}",
-                ha=ha,
-                va=va,
-                fontsize=fs_adj,
-                color=this_color,
-                zorder=5,
-                rotation=rot,
-                rotation_mode="anchor",
+                u_lab, v_lab, f"{val_comp}",
+                ha=ha, va=va, fontsize=fs_use,
+                color=this_color, zorder=5,
+                rotation=rot, rotation_mode="anchor",
             )
 
     # ---- Overlay eroded regions (for visual_text_center) -------------------
-    if visual_text_center_debug and eroded_rgba is not None and np.any(eroded_rgba[..., 3] > 0):
+    if debug and eroded_rgba is not None and np.any(eroded_rgba[..., 3] > 0):
         ax.imshow(
             eroded_rgba,
             origin="lower",
             extent=[-R_out, R_out, -R_out, R_out],
             interpolation="nearest",
-            zorder=2,  # above base fill/highlight, below curves & text
+            zorder=2,
         )
 
     # ---- Class labels on vennfan -------------------------------------------
     dx_const, dy_const = last_constant_label_offset
-
     label_angle_degs = class_label_angles(N, curve_mode)
 
     for i, (name, label_col) in enumerate(zip(class_names, label_rgbs)):
@@ -1167,7 +1033,6 @@ def vennfan(
         else:
             r_anchor = R
 
-        # Simple class-label radial offset (no additional per-label logic)
         r_lab = r_anchor + float(class_label_offset) * R
 
         # Optional shift for last (constant) label

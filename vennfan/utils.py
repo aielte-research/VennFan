@@ -1273,7 +1273,7 @@ def region_label_mode_for_key(
 # ---------------------------------------------------------------------------
 
 
-def make_demo_values(N: int) -> np.ndarray:
+def make_demo_values(N: int, complement: Optional[str] = None) -> np.ndarray:
     """
     Label each region by which sets it belongs to, e.g. "", "A", "BC", "ABCDE", etc.
     For testing, the complement (all zeros) is normally left as None.
@@ -1285,5 +1285,5 @@ def make_demo_values(N: int) -> np.ndarray:
         s = "".join(letters[i] for i, bit in enumerate(idx) if bit)
         arr[idx] = s
     # Complement (all zeros) left as None by default
-    arr[(0,) * N] = None
+    arr[(0,) * N] = complement
     return arr
