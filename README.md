@@ -89,6 +89,13 @@ plt.close(fig)
 | `region_label_placement` | `"visual_text_center"` | Label placement mode: `"visual_text_center"` (erosion-based interior anchor), `"visual_center"` (visual center), `"radial"` (along radial angle), or `"hybrid"` (per-region choice). |
 | `region_radial_offset` | `None` | Radial offsets used by `"radial"` and the radial branch in `"hybrid"`. If `None`, loads per-`N` defaults `(inside, outside)`. If a float, uses the same offset for both; if a 2-tuple/list, interpreted as `(inside, outside)`. |
 
+| `"visual_text_center"` | `"visual_center"` |
+|---|---|
+| ![vennfan_sine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_text_center.svg?raw=true) | ![vennfan_cosine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_center.svg?raw=true) |
+
+| `"radial"` | `"hybrid"` |
+|---|---|
+| ![vennfan_sine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_radial.svg?raw=true) | ![vennfan_cosine_N7](https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_hybrid.svg?raw=true) |
 
 ## How to Cite
 ```bibtex
