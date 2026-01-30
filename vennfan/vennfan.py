@@ -652,8 +652,8 @@ def vennfan(
         zorder=1,
     )
 
-    ax.set_xlim(-R_out, R_out)
-    ax.set_ylim(-R_out, R_out)
+    ax.set_xlim(float(xmn_ext), float(xmx_ext))
+    ax.set_ylim(float(ymn_ext), float(ymx_ext))
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
