@@ -22,19 +22,21 @@ import matplotlib.pyplot as plt
 
 from vennfan import vennfan
 
-# Fill a 4D 2x2x2x2 array with random values
-rand4 = np.random.randint(0, 1000, size=(2, 2, 2, 2))
+# Fill a 4D 2x2x2x2x2x2 array with random values
+rand6 = np.random.randint(0, 1000, size=(2, 2, 2, 2, 2, 2))
     
-# Set the value at A∩B to 42
-rand4[1,1,0,0] = 42
+# Set the value at A∩B∩C to 42
+rand6[1,1,1,0,0,0] = 42
 
 # Create the Venn-diagram
-fig = vennfan(rand4, ["A", "B", "C", "D"])
+fig = vennfan(rand6, ["A", "B", "C", "D", "E", "F"])
 
 # Save the figure
-fig.savefig("rand4_demo.png", dpi=100, bbox_inches="tight")
+fig.savefig("rand6_demo.png", dpi=100, bbox_inches="tight")
 plt.close(fig)
 ```
+
+![vennfan_cosine_N7](https://github.com/aielte-research/vennfan/blob/master/example/rand6_demo.png?raw=true)
 ### Optional Parameters
 
 #### Core data
