@@ -92,7 +92,7 @@ plt.close(fig)
 
 | `"visual_text_center"` | `"visual_center"` | `"radial"` | `"hybrid"` |
 |---|---|---|---|
-| <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_text_center.png?raw=true" width="250"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_center.png?raw=true" width="250"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_radial.png?raw=true" width="250"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_hybrid.png?raw=true" width="250"> |
+| <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_text_center.png?raw=true" width="210"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_visual_center.png?raw=true" width="210"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_radial.png?raw=true" width="210"> | <img src="https://github.com/aielte-research/vennfan/blob/master/example/vennfan_cosine_linear_7_hybrid.png?raw=true" width="210"> |
 
 ## How to Cite
 ```bibtex
