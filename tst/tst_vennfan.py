@@ -11,13 +11,13 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 from vennfan import vennfan, make_demo_values
 
 
-def _render_one(curve_mode: str, decay: str, N: int, greek_names: list[str], outdir: str) -> str:
+def _render_one(curve_mode: str, decay: str, N: int, region_label_placement: str, greek_names: list[str], outdir: str) -> str:
     # Keep imports inside to reduce parent-process state leakage
     import matplotlib.pyplot as plt
 
     values = make_demo_values(N)
     class_names = greek_names[:N]
-    outfile = os.path.join(outdir, f"vennfan_{curve_mode}_{decay}_{N}.png")
+    outfile = os.path.join(outdir, f"vennfan_{curve_mode}_{decay}_{N}_{region_label_placement}.svg")
 
     vennfan(
         values,
@@ -25,13 +25,10 @@ def _render_one(curve_mode: str, decay: str, N: int, greek_names: list[str], out
         outfile=outfile,
         decay=decay,
         curve_mode=curve_mode,
-        draw_tight_factor=1.02,
         color_mixing="average",
-        region_label_placement="visual_text_center",
-        radial_bias=0.6,
-        visual_center_rotate_toward_radial=True,
-        visual_text_center_area_fraction=0.15,
         text_color="black",
+        #highlight_factor=0.75,
+        region_label_placement=region_label_placement,
     )
 
     plt.close("all")
@@ -57,18 +54,19 @@ def main() -> None:
         "Zeta", "Eta", "Theta", "Iota", "Kappa",
     ]
 
-    tasks: list[tuple[str, str, int]] = [
-        (curve_mode, decay, N)
+    tasks: list[tuple[str, str, int, str]] = [
+        (curve_mode, decay, N, region_label_placement)
         for curve_mode in ["sine", "cosine"]
         for decay in ["linear", "exponential"]
+        for region_label_placement in ["visual_text_center", "visual_center", "radial", "hybrid"]
         for N in range(2, 10)
     ]
 
     if workers == 1:
         # No multiprocessing
-        for curve_mode, decay, N in tasks:
+        for curve_mode, decay, N, region_label_placement in tasks:
             print(f"Generating vennfan diagram for curve_mode={curve_mode} decay={decay} N={N}...")
-            _render_one(curve_mode, decay, N, greek_names, outdir)
+            _render_one(curve_mode, decay, N, region_label_placement, greek_names, outdir)
         return
 
     # Multiprocessing
@@ -80,12 +78,12 @@ def main() -> None:
     ctx = mp.get_context("spawn")
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
         future_to_task = {
-            ex.submit(_render_one, curve_mode, decay, N, greek_names, outdir): (curve_mode, decay, N)
-            for (curve_mode, decay, N) in tasks
+            ex.submit(_render_one, curve_mode, decay, N, region_label_placement, greek_names, outdir): (curve_mode, decay, N, region_label_placement)
+            for (curve_mode, decay, N, region_label_placement) in tasks
         }
 
         for fut in as_completed(future_to_task):
-            curve_mode, decay, N = future_to_task[fut]
+            curve_mode, decay, N, region_label_placement = future_to_task[fut]
             # Surface exceptions with task context
             try:
                 outfile = fut.result()
